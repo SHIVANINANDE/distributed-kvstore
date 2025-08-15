@@ -8,26 +8,33 @@ import (
 	"distributed-kvstore/internal/api"
 	"distributed-kvstore/internal/config"
 	"distributed-kvstore/internal/logging"
+	"distributed-kvstore/internal/monitoring"
 	"distributed-kvstore/internal/storage"
 )
 
 // HTTPServer represents the HTTP REST API server
 type HTTPServer struct {
-	config     *config.Config
-	storage    storage.StorageEngine
-	logger     *logging.Logger
-	server     *http.Server
+	config      *config.Config
+	storage     storage.StorageEngine
+	logger      *logging.Logger
+	monitoring  *monitoring.MonitoringService
+	server      *http.Server
 	restHandler *api.RESTHandler
 }
 
 // NewHTTPServer creates a new HTTP server
 func NewHTTPServer(cfg *config.Config, storageEngine storage.StorageEngine, logger *logging.Logger) *HTTPServer {
-	restHandler := api.NewRESTHandler(storageEngine, logger)
+	// Initialize monitoring service
+	monitoringService := monitoring.NewMonitoringService(storageEngine)
+	
+	// Create REST handler with monitoring
+	restHandler := api.NewRESTHandler(storageEngine, logger, monitoringService)
 	
 	return &HTTPServer{
 		config:      cfg,
 		storage:     storageEngine,
 		logger:      logger,
+		monitoring:  monitoringService,
 		restHandler: restHandler,
 	}
 }
@@ -35,6 +42,11 @@ func NewHTTPServer(cfg *config.Config, storageEngine storage.StorageEngine, logg
 // Start starts the HTTP server
 func (s *HTTPServer) Start() error {
 	addr := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.Port)
+	
+	// Start monitoring service
+	if s.monitoring != nil {
+		s.monitoring.Start()
+	}
 	
 	router := s.restHandler.SetupRoutes()
 	
@@ -56,6 +68,11 @@ func (s *HTTPServer) Start() error {
 
 // Stop stops the HTTP server gracefully
 func (s *HTTPServer) Stop(ctx context.Context) error {
+	// Stop monitoring service
+	if s.monitoring != nil {
+		s.monitoring.Stop()
+	}
+	
 	if s.server != nil {
 		s.logger.Info("Stopping HTTP server")
 		return s.server.Shutdown(ctx)

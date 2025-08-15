@@ -39,7 +39,7 @@ func setupTestRESTHandler(t *testing.T) *RESTHandler {
 		storageEngine.Close()
 	})
 
-	return NewRESTHandler(storageEngine, logger)
+	return NewRESTHandler(storageEngine, logger, nil)
 }
 
 func TestRESTHandler_PutKey(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"distributed-kvstore/internal/logging"
+	"distributed-kvstore/internal/monitoring"
 	"distributed-kvstore/internal/storage"
 
 	"github.com/gorilla/mux"
@@ -15,15 +16,17 @@ import (
 
 // RESTHandler handles HTTP REST API requests
 type RESTHandler struct {
-	storage storage.StorageEngine
-	logger  *logging.Logger
+	storage    storage.StorageEngine
+	logger     *logging.Logger
+	monitoring *monitoring.MonitoringService
 }
 
 // NewRESTHandler creates a new REST API handler
-func NewRESTHandler(storageEngine storage.StorageEngine, logger *logging.Logger) *RESTHandler {
+func NewRESTHandler(storageEngine storage.StorageEngine, logger *logging.Logger, monitoringService *monitoring.MonitoringService) *RESTHandler {
 	return &RESTHandler{
-		storage: storageEngine,
-		logger:  logger,
+		storage:    storageEngine,
+		logger:     logger,
+		monitoring: monitoringService,
 	}
 }
 

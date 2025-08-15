@@ -15,6 +15,9 @@ func (h *RESTHandler) SetupRoutes() *mux.Router {
 	// Apply middleware
 	router.Use(logging.CorrelationIDMiddleware(h.logger))
 	router.Use(logging.LoggingMiddleware(h.logger))
+	if h.monitoring != nil {
+		router.Use(h.monitoring.MonitoringMiddleware)
+	}
 	router.Use(h.CORSMiddleware)
 
 	// API version 1
@@ -34,9 +37,20 @@ func (h *RESTHandler) SetupRoutes() *mux.Router {
 	v1.HandleFunc("/kv/batch/get", h.BatchGet).Methods(http.MethodPost)
 	v1.HandleFunc("/kv/batch/delete", h.BatchDelete).Methods(http.MethodPost)
 
-	// Health and stats
-	v1.HandleFunc("/health", h.Health).Methods(http.MethodGet)
+	// Health and stats (enhanced)
+	if h.monitoring != nil {
+		v1.HandleFunc("/health", h.monitoring.GetHealthHandler()).Methods(http.MethodGet)
+	} else {
+		v1.HandleFunc("/health", h.Health).Methods(http.MethodGet)
+	}
 	v1.HandleFunc("/stats", h.Stats).Methods(http.MethodGet)
+	
+	// Monitoring endpoints
+	if h.monitoring != nil {
+		v1.Handle("/metrics", h.monitoring.GetMetricsHandler()).Methods(http.MethodGet)
+		router.Handle("/dashboard", h.monitoring.GetDashboardHandler()).Methods(http.MethodGet)
+		router.Handle("/dashboard/", h.monitoring.GetDashboardHandler()).Methods(http.MethodGet)
+	}
 
 	// Handle OPTIONS for all routes (CORS preflight)
 	v1.Methods(http.MethodOptions).HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +58,11 @@ func (h *RESTHandler) SetupRoutes() *mux.Router {
 	})
 
 	// Root endpoints
-	router.HandleFunc("/health", h.Health).Methods(http.MethodGet)
+	if h.monitoring != nil {
+		router.HandleFunc("/health", h.monitoring.GetHealthHandler()).Methods(http.MethodGet)
+	} else {
+		router.HandleFunc("/health", h.Health).Methods(http.MethodGet)
+	}
 	router.HandleFunc("/", h.RootHandler).Methods(http.MethodGet)
 
 	return router
