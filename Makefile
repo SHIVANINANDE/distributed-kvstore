@@ -15,6 +15,8 @@ build: proto ## Build all binaries
 	@go build -o bin/kvstore-server cmd/server/main.go
 	@echo "Building client..."
 	@go build -o bin/kvstore-client cmd/client/main.go
+	@echo "Building kvtool..."
+	@go build -o bin/kvtool cmd/kvtool/main.go
 	@echo "Build completed!"
 
 install: ## Install binaries to GOPATH/bin
