@@ -19,6 +19,12 @@ cluster:
 logging:
   level: "info"
   format: "json"
+  output: "stdout"
+  enable_request_tracing: true
+  enable_correlation_ids: true
+  enable_database_logging: false
+  enable_performance_log: false
+  log_sampling: 0
 
 metrics:
   enabled: true

@@ -3,6 +3,8 @@ package api
 import (
 	"net/http"
 
+	"distributed-kvstore/internal/logging"
+
 	"github.com/gorilla/mux"
 )
 
@@ -11,8 +13,9 @@ func (h *RESTHandler) SetupRoutes() *mux.Router {
 	router := mux.NewRouter()
 
 	// Apply middleware
+	router.Use(logging.CorrelationIDMiddleware(h.logger))
+	router.Use(logging.LoggingMiddleware(h.logger))
 	router.Use(h.CORSMiddleware)
-	router.Use(h.LoggingMiddleware)
 
 	// API version 1
 	v1 := router.PathPrefix("/api/v1").Subrouter()

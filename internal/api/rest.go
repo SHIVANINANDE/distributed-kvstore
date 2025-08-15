@@ -7,20 +7,20 @@ import (
 	"strconv"
 	"time"
 
+	"distributed-kvstore/internal/logging"
 	"distributed-kvstore/internal/storage"
 
 	"github.com/gorilla/mux"
-	"github.com/sirupsen/logrus"
 )
 
 // RESTHandler handles HTTP REST API requests
 type RESTHandler struct {
 	storage storage.StorageEngine
-	logger  *logrus.Logger
+	logger  *logging.Logger
 }
 
 // NewRESTHandler creates a new REST API handler
-func NewRESTHandler(storageEngine storage.StorageEngine, logger *logrus.Logger) *RESTHandler {
+func NewRESTHandler(storageEngine storage.StorageEngine, logger *logging.Logger) *RESTHandler {
 	return &RESTHandler{
 		storage: storageEngine,
 		logger:  logger,
@@ -164,29 +164,35 @@ type ErrorResponse struct {
 
 // PUT /api/v1/kv/{key}
 func (h *RESTHandler) PutKey(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	ctx := r.Context()
 	vars := mux.Vars(r)
 	key := vars["key"]
 
 	if key == "" {
+		h.logger.WarnContext(ctx, "PUT request with empty key")
 		h.writeErrorResponse(w, http.StatusBadRequest, "Key cannot be empty")
 		return
 	}
 
 	var req PutRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.WarnContext(ctx, "PUT request with invalid JSON", "error", err.Error())
 		h.writeErrorResponse(w, http.StatusBadRequest, "Invalid JSON request")
 		return
 	}
 
-	h.logger.WithFields(logrus.Fields{
-		"method": "PUT",
-		"key":    key,
-		"ttl":    req.TTLSeconds,
-	}).Debug("Processing PUT request")
+	h.logger.DebugContext(ctx, "Processing PUT request",
+		"key", key,
+		"value_length", len(req.Value),
+		"ttl_seconds", req.TTLSeconds,
+	)
 
 	err := h.storage.Put([]byte(key), []byte(req.Value))
+	duration := time.Since(start)
+	
 	if err != nil {
-		h.logger.WithError(err).WithField("key", key).Error("Failed to put key")
+		h.logger.DatabaseOperation(ctx, "put", key, duration, err)
 		h.writeJSONResponse(w, http.StatusInternalServerError, PutResponse{
 			Success: false,
 			Error:   err.Error(),
@@ -194,6 +200,7 @@ func (h *RESTHandler) PutKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.logger.DatabaseOperation(ctx, "put", key, duration, nil)
 	h.writeJSONResponse(w, http.StatusOK, PutResponse{
 		Success: true,
 	})
@@ -209,10 +216,10 @@ func (h *RESTHandler) GetKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logger.WithFields(logrus.Fields{
-		"method": "GET",
-		"key":    key,
-	}).Debug("Processing GET request")
+	h.logger.DebugContext(r.Context(), "Processing GET request",
+		"method", "GET",
+		"key", key,
+	)
 
 	value, err := h.storage.Get([]byte(key))
 	if err != nil {
@@ -248,10 +255,10 @@ func (h *RESTHandler) DeleteKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logger.WithFields(logrus.Fields{
-		"method": "DELETE",
-		"key":    key,
-	}).Debug("Processing DELETE request")
+	h.logger.DebugContext(r.Context(), "Processing DELETE request",
+		"method", "DELETE",
+		"key", key,
+	)
 
 	existed, err := h.storage.Exists([]byte(key))
 	if err != nil {
@@ -290,10 +297,10 @@ func (h *RESTHandler) ExistsKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logger.WithFields(logrus.Fields{
-		"method": "HEAD",
-		"key":    key,
-	}).Debug("Processing EXISTS request")
+	h.logger.DebugContext(r.Context(), "Processing EXISTS request",
+		"method", "HEAD",
+		"key", key,
+	)
 
 	exists, err := h.storage.Exists([]byte(key))
 	if err != nil {
@@ -331,13 +338,13 @@ func (h *RESTHandler) ListKeys(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.logger.WithFields(logrus.Fields{
-		"method":    "GET",
-		"prefix":    prefix,
-		"limit":     limit,
-		"cursor":    cursor,
-		"keys_only": keysOnly,
-	}).Debug("Processing LIST request")
+	h.logger.DebugContext(r.Context(), "Processing LIST request",
+		"method", "GET",
+		"prefix", prefix,
+		"limit", limit,
+		"cursor", cursor,
+		"keys_only", keysOnly,
+	)
 
 	data, err := h.storage.List([]byte(prefix))
 	if err != nil {
@@ -369,10 +376,10 @@ func (h *RESTHandler) BatchPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logger.WithFields(logrus.Fields{
-		"method": "BATCH_PUT",
-		"count":  len(req.Items),
-	}).Debug("Processing batch PUT request")
+	h.logger.DebugContext(r.Context(), "Processing batch PUT request",
+		"method", "BATCH_PUT",
+		"count", len(req.Items),
+	)
 
 	successCount := 0
 	errorCount := 0
@@ -433,10 +440,10 @@ func (h *RESTHandler) BatchGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logger.WithFields(logrus.Fields{
-		"method": "BATCH_GET",
-		"count":  len(req.Keys),
-	}).Debug("Processing batch GET request")
+	h.logger.DebugContext(r.Context(), "Processing batch GET request",
+		"method", "BATCH_GET",
+		"count", len(req.Keys),
+	)
 
 	var results []BatchItemResult
 
@@ -490,10 +497,10 @@ func (h *RESTHandler) BatchDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logger.WithFields(logrus.Fields{
-		"method": "BATCH_DELETE",
-		"count":  len(req.Keys),
-	}).Debug("Processing batch DELETE request")
+	h.logger.DebugContext(r.Context(), "Processing batch DELETE request",
+		"method", "BATCH_DELETE",
+		"count", len(req.Keys),
+	)
 
 	successCount := 0
 	errorCount := 0
@@ -647,28 +654,7 @@ func (h *RESTHandler) writeErrorResponse(w http.ResponseWriter, statusCode int, 
 	})
 }
 
-// Middleware for logging
-func (h *RESTHandler) LoggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-
-		// Wrap the ResponseWriter to capture the status code
-		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
-
-		next.ServeHTTP(wrapped, r)
-
-		duration := time.Since(start)
-
-		h.logger.WithFields(logrus.Fields{
-			"method":      r.Method,
-			"path":        r.URL.Path,
-			"status":      wrapped.statusCode,
-			"duration":    duration,
-			"remote_addr": r.RemoteAddr,
-			"user_agent":  r.UserAgent(),
-		}).Info("HTTP request processed")
-	})
-}
+// Note: Logging middleware is now handled by the logging package
 
 // CORS middleware
 func (h *RESTHandler) CORSMiddleware(next http.Handler) http.Handler {

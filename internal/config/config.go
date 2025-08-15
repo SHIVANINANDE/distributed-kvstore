@@ -54,9 +54,14 @@ type ClusterConfig struct {
 }
 
 type LoggingConfig struct {
-	Level  string `yaml:"level" json:"level"`
-	Format string `yaml:"format" json:"format"`
-	Output string `yaml:"output" json:"output"`
+	Level                 string `yaml:"level" json:"level"`
+	Format                string `yaml:"format" json:"format"`
+	Output                string `yaml:"output" json:"output"`
+	EnableRequestTracing  bool   `yaml:"enable_request_tracing" json:"enable_request_tracing"`
+	EnableCorrelationIDs  bool   `yaml:"enable_correlation_ids" json:"enable_correlation_ids"`
+	EnableDatabaseLogging bool   `yaml:"enable_database_logging" json:"enable_database_logging"`
+	EnablePerformanceLog  bool   `yaml:"enable_performance_log" json:"enable_performance_log"`
+	LogSampling           int    `yaml:"log_sampling" json:"log_sampling"` // 0 = no sampling, N = sample every Nth log
 }
 
 type MetricsConfig struct {
@@ -125,9 +130,14 @@ func DefaultConfig() *Config {
 			JoinTimeout:   10 * time.Second,
 		},
 		Logging: LoggingConfig{
-			Level:  "info",
-			Format: "json",
-			Output: "stdout",
+			Level:                 "info",
+			Format:                "json",
+			Output:                "stdout",
+			EnableRequestTracing:  true,
+			EnableCorrelationIDs:  true,
+			EnableDatabaseLogging: false,
+			EnablePerformanceLog:  false,
+			LogSampling:           0,
 		},
 		Metrics: MetricsConfig{
 			Enabled: true,

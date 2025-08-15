@@ -7,22 +7,21 @@ import (
 
 	"distributed-kvstore/internal/api"
 	"distributed-kvstore/internal/config"
+	"distributed-kvstore/internal/logging"
 	"distributed-kvstore/internal/storage"
-
-	"github.com/sirupsen/logrus"
 )
 
 // HTTPServer represents the HTTP REST API server
 type HTTPServer struct {
 	config     *config.Config
 	storage    storage.StorageEngine
-	logger     *logrus.Logger
+	logger     *logging.Logger
 	server     *http.Server
 	restHandler *api.RESTHandler
 }
 
 // NewHTTPServer creates a new HTTP server
-func NewHTTPServer(cfg *config.Config, storageEngine storage.StorageEngine, logger *logrus.Logger) *HTTPServer {
+func NewHTTPServer(cfg *config.Config, storageEngine storage.StorageEngine, logger *logging.Logger) *HTTPServer {
 	restHandler := api.NewRESTHandler(storageEngine, logger)
 	
 	return &HTTPServer{
@@ -47,10 +46,10 @@ func (s *HTTPServer) Start() error {
 		IdleTimeout:  s.config.Server.IdleTimeout,
 	}
 
-	s.logger.WithFields(logrus.Fields{
-		"address": addr,
-		"service": "http",
-	}).Info("Starting HTTP server")
+	s.logger.Info("Starting HTTP server",
+		"address", addr,
+		"service", "http",
+	)
 
 	return s.server.ListenAndServe()
 }

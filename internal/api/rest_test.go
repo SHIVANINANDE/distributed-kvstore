@@ -9,18 +9,19 @@ import (
 	"testing"
 
 	"distributed-kvstore/internal/config"
+	"distributed-kvstore/internal/logging"
 	"distributed-kvstore/internal/storage"
 
 	"github.com/gorilla/mux"
-	"github.com/sirupsen/logrus"
 )
 
 func setupTestRESTHandler(t *testing.T) *RESTHandler {
 	cfg := config.DefaultConfig()
 	cfg.Storage.InMemory = true
 
-	logger := logrus.New()
-	logger.SetLevel(logrus.ErrorLevel)
+	// Use test logging configuration
+	testLogConfig := logging.TestLoggingConfig()
+	logger := logging.NewLogger(&testLogConfig)
 
 	storageConfig := storage.Config{
 		DataPath:   "",
