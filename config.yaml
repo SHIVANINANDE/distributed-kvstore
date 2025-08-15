@@ -1,0 +1,25 @@
+server:
+  host: "localhost"
+  port: 8080
+  grpc_port: 9090
+
+storage:
+  engine: "badger"
+  data_path: "./data/badger"
+  in_memory: false
+  sync_writes: false
+  value_log_gc: true
+  gc_interval: "5m"
+
+cluster:
+  node_id: "node1"
+  peers: []
+  raft_port: 7000
+
+logging:
+  level: "info"
+  format: "json"
+
+metrics:
+  enabled: true
+  port: 2112
