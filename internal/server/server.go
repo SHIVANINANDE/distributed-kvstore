@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -19,6 +20,7 @@ type Server struct {
 	logger      *logrus.Logger
 	storage     storage.StorageEngine
 	grpcServer  *GRPCServer
+	httpServer  *HTTPServer
 	startTime   time.Time
 }
 
@@ -44,12 +46,14 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	}
 
 	grpcServer := NewGRPCServer(cfg, storageEngine, logger)
+	httpServer := NewHTTPServer(cfg, storageEngine, logger)
 
 	return &Server{
 		config:     cfg,
 		logger:     logger,
 		storage:    storageEngine,
 		grpcServer: grpcServer,
+		httpServer: httpServer,
 		startTime:  time.Now(),
 	}, nil
 }
@@ -68,10 +72,17 @@ func (s *Server) Start() error {
 		}
 	}()
 
+	go func() {
+		if err := s.httpServer.Start(); err != nil && err != http.ErrServerClosed {
+			errChan <- fmt.Errorf("HTTP server failed: %w", err)
+		}
+	}()
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	s.logger.WithFields(logrus.Fields{
+		"http_port": s.config.Server.Port,
 		"grpc_port": s.config.Server.GRPCPort,
 		"node_id":   s.config.Cluster.NodeID,
 	}).Info("Server started successfully")
@@ -96,6 +107,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	go func() {
 		s.grpcServer.Stop()
+		
+		if err := s.httpServer.Stop(shutdownCtx); err != nil {
+			s.logger.WithError(err).Error("Failed to stop HTTP server")
+		}
 
 		if err := s.storage.Close(); err != nil {
 			s.logger.WithError(err).Error("Failed to close storage engine")

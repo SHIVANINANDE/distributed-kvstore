@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/dgraph-io/badger/v4 v4.8.0
+	github.com/gorilla/mux v1.8.1
 	github.com/sirupsen/logrus v1.9.3
 	google.golang.org/grpc v1.65.0
 	google.golang.org/protobuf v1.36.6
