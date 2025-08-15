@@ -1,0 +1,187 @@
+syntax = "proto3";
+
+package cluster;
+
+option go_package = "distributed-kvstore/proto/cluster";
+
+// Cluster management service for internal node-to-node communication
+service ClusterService {
+  // Node management
+  rpc JoinCluster(JoinRequest) returns (JoinResponse);
+  rpc LeaveCluster(LeaveRequest) returns (LeaveResponse);
+  rpc GetNodes(GetNodesRequest) returns (GetNodesResponse);
+  
+  // Leadership and consensus
+  rpc RequestVote(VoteRequest) returns (VoteResponse);
+  rpc AppendEntries(AppendRequest) returns (AppendResponse);
+  rpc InstallSnapshot(SnapshotRequest) returns (SnapshotResponse);
+  
+  // Data replication
+  rpc ReplicateData(ReplicationRequest) returns (ReplicationResponse);
+  rpc SyncData(SyncRequest) returns (SyncResponse);
+  
+  // Health and monitoring
+  rpc Ping(PingRequest) returns (PingResponse);
+  rpc GetClusterStatus(ClusterStatusRequest) returns (ClusterStatusResponse);
+}
+
+// Node management messages
+message JoinRequest {
+  string node_id = 1;
+  string address = 2;   // Node's network address
+  int32 raft_port = 3;  // Node's Raft port
+  int32 grpc_port = 4;  // Node's gRPC port
+  map<string, string> metadata = 5; // Additional node metadata
+}
+
+message JoinResponse {
+  bool success = 1;
+  string leader_id = 2;
+  repeated NodeInfo nodes = 3; // Current cluster nodes
+  string error = 4;
+}
+
+message LeaveRequest {
+  string node_id = 1;
+  bool force = 2; // Force removal even if node is unreachable
+}
+
+message LeaveResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message GetNodesRequest {
+}
+
+message GetNodesResponse {
+  repeated NodeInfo nodes = 1;
+  string error = 2;
+}
+
+message NodeInfo {
+  string node_id = 1;
+  string address = 2;
+  int32 raft_port = 3;
+  int32 grpc_port = 4;
+  string state = 5;     // active, inactive, failed
+  string role = 6;      // leader, follower, candidate
+  int64 last_seen = 7;  // Unix timestamp
+  map<string, string> metadata = 8;
+}
+
+// Raft consensus messages
+message VoteRequest {
+  int64 term = 1;
+  string candidate_id = 2;
+  int64 last_log_index = 3;
+  int64 last_log_term = 4;
+}
+
+message VoteResponse {
+  int64 term = 1;
+  bool vote_granted = 2;
+}
+
+message AppendRequest {
+  int64 term = 1;
+  string leader_id = 2;
+  int64 prev_log_index = 3;
+  int64 prev_log_term = 4;
+  repeated LogEntry entries = 5;
+  int64 leader_commit = 6;
+}
+
+message AppendResponse {
+  int64 term = 1;
+  bool success = 2;
+  int64 last_log_index = 3; // For leader to update nextIndex
+}
+
+message LogEntry {
+  int64 index = 1;
+  int64 term = 2;
+  string type = 3;     // PUT, DELETE, NOOP
+  bytes data = 4;      // Serialized operation data
+  int64 timestamp = 5; // Unix timestamp
+}
+
+message SnapshotRequest {
+  int64 term = 1;
+  string leader_id = 2;
+  int64 last_included_index = 3;
+  int64 last_included_term = 4;
+  bytes data = 5;      // Snapshot data
+  bool done = 6;       // Whether this is the last chunk
+  int64 offset = 7;    // Offset for chunked transfer
+}
+
+message SnapshotResponse {
+  int64 term = 1;
+  bool success = 2;
+}
+
+// Data replication messages
+message ReplicationRequest {
+  repeated Operation operations = 1;
+  int64 log_index = 2;
+  string leader_id = 3;
+}
+
+message Operation {
+  string type = 1;    // PUT, DELETE
+  string key = 2;
+  bytes value = 3;
+  int64 timestamp = 4;
+  map<string, string> metadata = 5;
+}
+
+message ReplicationResponse {
+  bool success = 1;
+  int64 last_applied = 2;
+  string error = 3;
+}
+
+message SyncRequest {
+  string node_id = 1;
+  int64 last_index = 2; // Last known log index
+}
+
+message SyncResponse {
+  repeated LogEntry entries = 1;
+  int64 current_index = 2;
+  bool has_more = 3;
+  string error = 4;
+}
+
+// Health and monitoring messages
+message PingRequest {
+  string node_id = 1;
+  int64 timestamp = 2;
+}
+
+message PingResponse {
+  string node_id = 1;
+  int64 timestamp = 2;
+  string status = 3;
+}
+
+message ClusterStatusRequest {
+}
+
+message ClusterStatusResponse {
+  string leader_id = 1;
+  int32 total_nodes = 2;
+  int32 active_nodes = 3;
+  int32 failed_nodes = 4;
+  repeated NodeInfo nodes = 5;
+  ClusterHealth health = 6;
+  string error = 7;
+}
+
+message ClusterHealth {
+  string status = 1;        // healthy, degraded, unhealthy
+  double consensus_ratio = 2; // Ratio of nodes that can reach consensus
+  int64 last_election = 3;   // Unix timestamp of last leader election
+  int64 uptime = 4;          // Cluster uptime in seconds
+}

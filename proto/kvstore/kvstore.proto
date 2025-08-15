@@ -1,0 +1,218 @@
+syntax = "proto3";
+
+package kvstore;
+
+option go_package = "distributed-kvstore/proto/kvstore";
+
+// Key-value store service definition
+service KVStore {
+  // Basic CRUD operations
+  rpc Put(PutRequest) returns (PutResponse);
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc Exists(ExistsRequest) returns (ExistsResponse);
+  
+  // Advanced operations
+  rpc List(ListRequest) returns (ListResponse);
+  rpc ListKeys(ListKeysRequest) returns (ListKeysResponse);
+  
+  // Batch operations
+  rpc BatchPut(BatchPutRequest) returns (BatchPutResponse);
+  rpc BatchGet(BatchGetRequest) returns (BatchGetResponse);
+  rpc BatchDelete(BatchDeleteRequest) returns (BatchDeleteResponse);
+  
+  // Storage management
+  rpc Backup(BackupRequest) returns (BackupResponse);
+  rpc Restore(RestoreRequest) returns (RestoreResponse);
+  rpc Stats(StatsRequest) returns (StatsResponse);
+  
+  // Health and status
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc Status(StatusRequest) returns (StatusResponse);
+}
+
+// Basic operations messages
+message PutRequest {
+  string key = 1;
+  bytes value = 2;
+  int64 ttl_seconds = 3; // Time to live in seconds (0 = no expiration)
+}
+
+message PutResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message GetRequest {
+  string key = 1;
+}
+
+message GetResponse {
+  bool found = 1;
+  bytes value = 2;
+  string error = 3;
+  int64 created_at = 4; // Unix timestamp
+  int64 expires_at = 5;  // Unix timestamp (0 = no expiration)
+}
+
+message DeleteRequest {
+  string key = 1;
+}
+
+message DeleteResponse {
+  bool success = 1;
+  bool existed = 2; // Whether the key existed before deletion
+  string error = 3;
+}
+
+message ExistsRequest {
+  string key = 1;
+}
+
+message ExistsResponse {
+  bool exists = 1;
+  string error = 2;
+}
+
+// Advanced operations messages
+message ListRequest {
+  string prefix = 1;
+  int32 limit = 2;   // Maximum number of items to return (0 = no limit)
+  string cursor = 3; // Pagination cursor
+}
+
+message ListResponse {
+  repeated KeyValue items = 1;
+  string next_cursor = 2; // Cursor for next page
+  bool has_more = 3;      // Whether there are more results
+  string error = 4;
+}
+
+message ListKeysRequest {
+  string prefix = 1;
+  int32 limit = 2;
+  string cursor = 3;
+}
+
+message ListKeysResponse {
+  repeated string keys = 1;
+  string next_cursor = 2;
+  bool has_more = 3;
+  string error = 4;
+}
+
+message KeyValue {
+  string key = 1;
+  bytes value = 2;
+  int64 created_at = 3;
+  int64 expires_at = 4;
+}
+
+// Batch operations messages
+message BatchPutRequest {
+  repeated PutItem items = 1;
+}
+
+message PutItem {
+  string key = 1;
+  bytes value = 2;
+  int64 ttl_seconds = 3;
+}
+
+message BatchPutResponse {
+  int32 success_count = 1;
+  int32 error_count = 2;
+  repeated BatchError errors = 3;
+}
+
+message BatchGetRequest {
+  repeated string keys = 1;
+}
+
+message BatchGetResponse {
+  repeated GetResult results = 1;
+  string error = 2;
+}
+
+message GetResult {
+  string key = 1;
+  bool found = 2;
+  bytes value = 3;
+  int64 created_at = 4;
+  int64 expires_at = 5;
+}
+
+message BatchDeleteRequest {
+  repeated string keys = 1;
+}
+
+message BatchDeleteResponse {
+  int32 success_count = 1;
+  int32 error_count = 2;
+  repeated BatchError errors = 3;
+}
+
+message BatchError {
+  string key = 1;
+  string error = 2;
+}
+
+// Storage management messages
+message BackupRequest {
+  string path = 1; // Backup file path
+}
+
+message BackupResponse {
+  bool success = 1;
+  string path = 2;   // Actual backup file path
+  int64 size = 3;    // Backup file size in bytes
+  string error = 4;
+}
+
+message RestoreRequest {
+  string path = 1; // Restore file path
+}
+
+message RestoreResponse {
+  bool success = 1;
+  int64 restored_count = 2; // Number of keys restored
+  string error = 3;
+}
+
+message StatsRequest {
+  bool include_details = 1; // Include detailed statistics
+}
+
+message StatsResponse {
+  int64 total_keys = 1;
+  int64 total_size = 2;      // Total size in bytes
+  int64 lsm_size = 3;        // LSM tree size
+  int64 vlog_size = 4;       // Value log size
+  map<string, string> details = 5; // Additional detailed stats
+  string error = 6;
+}
+
+// Health and status messages
+message HealthRequest {
+}
+
+message HealthResponse {
+  bool healthy = 1;
+  string status = 2;
+  int64 uptime_seconds = 3;
+  string version = 4;
+}
+
+message StatusRequest {
+}
+
+message StatusResponse {
+  string node_id = 1;
+  string role = 2;           // leader, follower, candidate
+  string state = 3;          // running, starting, stopping
+  repeated string peers = 4;  // Connected peers
+  int64 last_applied = 5;    // Last applied log index
+  int64 commit_index = 6;    // Commit index
+  string leader_id = 7;      // Current leader ID
+  map<string, string> metadata = 8; // Additional metadata
+}
