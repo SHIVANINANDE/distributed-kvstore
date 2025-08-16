@@ -10,6 +10,16 @@ storage:
   sync_writes: false
   value_log_gc: true
   gc_interval: "5m"
+  wal:
+    enabled: true
+    threshold: 67108864  # 64MB
+    max_files: 5
+    fsync_threshold: 1000
+  cache:
+    enabled: true
+    size: 10000
+    ttl: "30m"
+    cleanup_interval: "5m"
 
 cluster:
   node_id: "node1"
@@ -29,3 +39,13 @@ logging:
 metrics:
   enabled: true
   port: 2112
+
+tracing:
+  enabled: false
+  service_name: "kvstore"
+  service_version: "1.0.0"
+  environment: "development"
+  exporter_type: "console"  # console, jaeger, otlp
+  jaeger_endpoint: "http://localhost:14268/api/traces"
+  otlp_endpoint: "http://localhost:4318"
+  sampling_ratio: 1.0

@@ -18,6 +18,7 @@ type Config struct {
 	Logging  LoggingConfig  `yaml:"logging" json:"logging"`
 	Metrics  MetricsConfig  `yaml:"metrics" json:"metrics"`
 	Security SecurityConfig `yaml:"security" json:"security"`
+	Tracing  TracingConfig  `yaml:"tracing" json:"tracing"`
 }
 
 type ServerConfig struct {
@@ -39,6 +40,24 @@ type StorageConfig struct {
 	GCInterval  time.Duration `yaml:"gc_interval" json:"gc_interval"`
 	BackupPath  string        `yaml:"backup_path" json:"backup_path"`
 	MaxFileSize int64         `yaml:"max_file_size" json:"max_file_size"`
+	// WAL settings
+	WAL WALConfig `yaml:"wal" json:"wal"`
+	// Cache settings
+	Cache CacheConfig `yaml:"cache" json:"cache"`
+}
+
+type CacheConfig struct {
+	Enabled    bool          `yaml:"enabled" json:"enabled"`
+	Size       int           `yaml:"size" json:"size"`           // Maximum number of items in cache
+	TTL        time.Duration `yaml:"ttl" json:"ttl"`             // Default TTL for cached items
+	CleanupInterval time.Duration `yaml:"cleanup_interval" json:"cleanup_interval"` // How often to clean expired items
+}
+
+type WALConfig struct {
+	Enabled      bool  `yaml:"enabled" json:"enabled"`
+	Threshold    int64 `yaml:"threshold" json:"threshold"`       // WAL file size threshold for rotation (bytes)
+	MaxFiles     int   `yaml:"max_files" json:"max_files"`       // Maximum number of WAL files to keep
+	FSyncThreshold int `yaml:"fsync_threshold" json:"fsync_threshold"` // Number of writes before fsync
 }
 
 type ClusterConfig struct {
@@ -79,6 +98,18 @@ type SecurityConfig struct {
 	AuthToken   string `yaml:"auth_token" json:"auth_token"`
 }
 
+type TracingConfig struct {
+	Enabled        bool              `yaml:"enabled" json:"enabled"`
+	ServiceName    string            `yaml:"service_name" json:"service_name"`
+	ServiceVersion string            `yaml:"service_version" json:"service_version"`
+	Environment    string            `yaml:"environment" json:"environment"`
+	ExporterType   string            `yaml:"exporter_type" json:"exporter_type"`
+	JaegerEndpoint string            `yaml:"jaeger_endpoint" json:"jaeger_endpoint"`
+	OTLPEndpoint   string            `yaml:"otlp_endpoint" json:"otlp_endpoint"`
+	OTLPHeaders    map[string]string `yaml:"otlp_headers" json:"otlp_headers"`
+	SamplingRatio  float64           `yaml:"sampling_ratio" json:"sampling_ratio"`
+}
+
 func Load(configPath string) (*Config, error) {
 	config := DefaultConfig()
 	
@@ -117,6 +148,18 @@ func DefaultConfig() *Config {
 			GCInterval:  5 * time.Minute,
 			BackupPath:  "./backups",
 			MaxFileSize: 64 * 1024 * 1024, // 64MB
+			WAL: WALConfig{
+				Enabled:        true,
+				Threshold:      64 * 1024 * 1024, // 64MB per WAL file
+				MaxFiles:       5,                // Keep 5 WAL files
+				FSyncThreshold: 1000,             // Sync every 1000 writes
+			},
+			Cache: CacheConfig{
+				Enabled:         true,
+				Size:            10000,           // 10k items max
+				TTL:             30 * time.Minute, // 30 minute default TTL
+				CleanupInterval: 5 * time.Minute,  // Clean expired items every 5 minutes
+			},
 		},
 		Cluster: ClusterConfig{
 			NodeID:        "node1",
@@ -151,6 +194,17 @@ func DefaultConfig() *Config {
 			CAFile:      "",
 			AuthEnabled: false,
 			AuthToken:   "",
+		},
+		Tracing: TracingConfig{
+			Enabled:        false,
+			ServiceName:    "kvstore",
+			ServiceVersion: "1.0.0",
+			Environment:    "development",
+			ExporterType:   "console",
+			JaegerEndpoint: "http://localhost:14268/api/traces",
+			OTLPEndpoint:   "http://localhost:4318",
+			OTLPHeaders:    make(map[string]string),
+			SamplingRatio:  1.0,
 		},
 	}
 }

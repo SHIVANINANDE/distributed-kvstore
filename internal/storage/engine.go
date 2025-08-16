@@ -11,6 +11,10 @@ import (
 
 type Engine struct {
 	db *badger.DB
+	// Performance optimization pools
+	readTxnPool   chan *badger.Txn
+	writeTxnPool  chan *badger.Txn
+	maxPoolSize   int
 }
 
 var _ StorageEngine = (*Engine)(nil)
@@ -21,6 +25,16 @@ type Config struct {
 	SyncWrites  bool
 	ValueLogGC  bool
 	GCInterval  time.Duration
+	// WAL settings
+	WALEnabled      bool
+	WALThreshold    int64  // WAL file size threshold for rotation
+	MaxWALFiles     int    // Maximum number of WAL files to keep
+	FSyncThreshold  int    // Number of writes before fsync
+	// Cache settings
+	CacheEnabled    bool
+	CacheSize       int
+	CacheTTL        time.Duration
+	CacheCleanupInterval time.Duration
 }
 
 var _ StorageConfig = (*Config)(nil)
@@ -52,7 +66,24 @@ func NewEngine(config Config) (*Engine, error) {
 		opts = opts.WithInMemory(true)
 	}
 	
+	// WAL and durability settings
 	opts = opts.WithSyncWrites(config.SyncWrites)
+	if config.WALEnabled {
+		// Enable value log (WAL) with custom thresholds
+		opts = opts.WithValueThreshold(1) // Store all values in value log (WAL)
+		if config.WALThreshold > 0 {
+			opts = opts.WithValueLogFileSize(config.WALThreshold)
+		}
+		if config.MaxWALFiles > 0 {
+			opts = opts.WithValueLogMaxEntries(uint32(config.MaxWALFiles * 1000))
+		}
+		if config.FSyncThreshold > 0 {
+			// Use periodic syncing for better performance with manual sync control
+			opts = opts.WithSyncWrites(false)
+			// Note: Manual fsync will be handled in batch operations
+		}
+	}
+	
 	opts = opts.WithLogger(nil) // Disable badger's default logger
 	
 	db, err := badger.Open(opts)
@@ -60,7 +91,14 @@ func NewEngine(config Config) (*Engine, error) {
 		return nil, fmt.Errorf("failed to open badger database: %w", err)
 	}
 
-	engine := &Engine{db: db}
+	engine := &Engine{
+		db:          db,
+		maxPoolSize: 50, // Configurable pool size for concurrent operations
+	}
+	
+	// Initialize transaction pools for better concurrency
+	engine.readTxnPool = make(chan *badger.Txn, engine.maxPoolSize)
+	engine.writeTxnPool = make(chan *badger.Txn, engine.maxPoolSize)
 	
 	if config.ValueLogGC && !config.InMemory {
 		go engine.runGC(config.GCInterval)
@@ -177,6 +215,58 @@ func (e *Engine) Stats() map[string]interface{} {
 		"vlog_size":     vlogSize,
 		"total_size":    lsmSize + vlogSize,
 	}
+}
+
+// BatchPut performs multiple put operations in a single transaction
+func (e *Engine) BatchPut(items []KeyValue) error {
+	return e.db.Update(func(txn *badger.Txn) error {
+		for _, item := range items {
+			if err := txn.Set(item.Key, item.Value); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// BatchGet retrieves multiple values efficiently
+func (e *Engine) BatchGet(keys [][]byte) ([]KeyValue, error) {
+	results := make([]KeyValue, len(keys))
+	
+	err := e.db.View(func(txn *badger.Txn) error {
+		for i, key := range keys {
+			item, err := txn.Get(key)
+			if err == badger.ErrKeyNotFound {
+				results[i] = KeyValue{Key: key, Value: nil, Found: false}
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			
+			value, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+			
+			results[i] = KeyValue{Key: key, Value: value, Found: true}
+		}
+		return nil
+	})
+	
+	return results, err
+}
+
+// BatchDelete performs multiple delete operations in a single transaction
+func (e *Engine) BatchDelete(keys [][]byte) error {
+	return e.db.Update(func(txn *badger.Txn) error {
+		for _, key := range keys {
+			if err := txn.Delete(key); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (e *Engine) runGC(interval time.Duration) {

@@ -7,11 +7,11 @@ import (
 	"time"
 
 	"distributed-kvstore/internal/config"
+	"distributed-kvstore/internal/logging"
 	"distributed-kvstore/internal/server"
 	"distributed-kvstore/internal/storage"
 	"distributed-kvstore/proto/kvstore"
 
-	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
@@ -33,8 +33,8 @@ func setupTestServer(t *testing.T) (*server.GRPCServer, func()) {
 	cfg := config.DefaultConfig()
 	cfg.Storage.InMemory = true
 
-	logger := logrus.New()
-	logger.SetLevel(logrus.ErrorLevel)
+	testLogConfig := logging.TestLoggingConfig()
+	logger := logging.NewLogger(&testLogConfig)
 
 	storageConfig := storage.Config{
 		DataPath:   "",

@@ -18,7 +18,7 @@ type Server struct {
 	config      *config.Config
 	logger      *logging.Logger
 	storage     storage.StorageEngine
-	grpcServer  *SimpleGRPCServer
+	grpcServer  *GRPCServer
 	httpServer  *HTTPServer
 	startTime   time.Time
 }
@@ -37,14 +37,24 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		SyncWrites: cfg.Storage.SyncWrites,
 		ValueLogGC: cfg.Storage.ValueLogGC,
 		GCInterval: cfg.Storage.GCInterval,
+		// WAL settings
+		WALEnabled:     cfg.Storage.WAL.Enabled,
+		WALThreshold:   cfg.Storage.WAL.Threshold,
+		MaxWALFiles:    cfg.Storage.WAL.MaxFiles,
+		FSyncThreshold: cfg.Storage.WAL.FSyncThreshold,
+		// Cache settings
+		CacheEnabled:         cfg.Storage.Cache.Enabled,
+		CacheSize:            cfg.Storage.Cache.Size,
+		CacheTTL:             cfg.Storage.Cache.TTL,
+		CacheCleanupInterval: cfg.Storage.Cache.CleanupInterval,
 	}
 
-	storageEngine, err := storage.NewEngine(storageConfig)
+	storageEngine, err := storage.NewStorageEngine(storageConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage engine: %w", err)
 	}
 
-	grpcServer := NewSimpleGRPCServer(cfg, storageEngine, logger)
+	grpcServer := NewGRPCServer(cfg, storageEngine, logger)
 	httpServer := NewHTTPServer(cfg, storageEngine, logger)
 
 	return &Server{
