@@ -2,3 +2,12 @@ data/
 *.vlog
 *.mem
 
+data/
+*.vlog
+*.mem
+*.sst
+KEYREGISTRY
+MANIFEST
+LOCK
+DISCARD
+
