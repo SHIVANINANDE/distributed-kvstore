@@ -13,6 +13,9 @@ func main() {
 	fmt.Println("Raft Consensus Demo")
 	fmt.Println("===================")
 
+	// Create a state machine for the demo
+	stateMachine := consensus.NewKVStateMachine(log.New(os.Stdout, "[SM] ", log.LstdFlags))
+
 	// Create a simple Raft node for demonstration
 	config := consensus.Config{
 		NodeID:           "demo-node-1",
@@ -21,6 +24,7 @@ func main() {
 		GrpcPort:         9001,
 		ElectionTimeout:  200 * time.Millisecond,
 		HeartbeatTimeout: 50 * time.Millisecond,
+		StateMachine:     stateMachine,
 		Logger:           log.New(os.Stdout, "[DEMO] ", log.LstdFlags),
 	}
 

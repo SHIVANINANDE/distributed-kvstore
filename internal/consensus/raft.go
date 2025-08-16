@@ -67,13 +67,26 @@ type RaftNode struct {
 	voteRequestCh  chan *VoteRequest
 	voteResponseCh chan *VoteResponse
 	appendEntryCh  chan *AppendRequest
+	applyEntryCh   chan *cluster.LogEntry
 	shutdownCh     chan struct{}
+
+	// State machine
+	stateMachine StateMachine
 
 	// Persistent state manager
 	persistence *PersistentState
+	logStorage  *LogStorage
+
+	// Safety validation
+	safetyValidator *SafetyValidator
+	partitionTolerance *PartitionTolerance
 
 	// Logger
 	logger *log.Logger
+
+	// Metrics and monitoring
+	lastLogIndex int64
+	lastLogTerm  int64
 }
 
 // PeerInfo contains information about a peer node
@@ -121,6 +134,13 @@ type AppendResponse struct {
 	NodeID       string
 }
 
+// StateMachine interface for applying committed log entries
+type StateMachine interface {
+	Apply(entry *cluster.LogEntry) interface{}
+	Snapshot() ([]byte, error)
+	Restore(data []byte) error
+}
+
 // Config holds the configuration for a Raft node
 type Config struct {
 	NodeID           string
@@ -129,6 +149,7 @@ type Config struct {
 	GrpcPort         int32
 	ElectionTimeout  time.Duration
 	HeartbeatTimeout time.Duration
+	StateMachine     StateMachine
 	Logger           *log.Logger
 }
 
@@ -147,6 +168,11 @@ func NewRaftNode(config Config) (*RaftNode, error) {
 	persistence, err := NewPersistentState(config.NodeID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create persistent state: %w", err)
+	}
+
+	logStorage, err := NewLogStorage(config.NodeID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create log storage: %w", err)
 	}
 
 	node := &RaftNode{
@@ -169,8 +195,13 @@ func NewRaftNode(config Config) (*RaftNode, error) {
 		voteRequestCh:    make(chan *VoteRequest, 100),
 		voteResponseCh:   make(chan *VoteResponse, 100),
 		appendEntryCh:    make(chan *AppendRequest, 100),
+		applyEntryCh:     make(chan *cluster.LogEntry, 100),
 		shutdownCh:       make(chan struct{}),
+		stateMachine:     config.StateMachine,
 		persistence:      persistence,
+		logStorage:       logStorage,
+		safetyValidator:  NewSafetyValidator(config.Logger),
+		partitionTolerance: NewPartitionTolerance(config.Logger),
 		logger:           config.Logger,
 	}
 
@@ -191,6 +222,9 @@ func (rn *RaftNode) Start() {
 	
 	// Start main event loop
 	go rn.run()
+	
+	// Start log application goroutine
+	go rn.applyEntries()
 }
 
 // Stop stops the Raft node
@@ -574,6 +608,12 @@ func (rn *RaftNode) sendHeartbeats() {
 
 // sendAppendEntries sends an append entries RPC to a peer
 func (rn *RaftNode) sendAppendEntries(peerID string, term int64, entries []*cluster.LogEntry) {
+	// Check if we can communicate with this peer (network partition simulation)
+	if !rn.partitionTolerance.CanCommunicate(rn.id, peerID) {
+		rn.logger.Printf("Cannot send heartbeat to %s: network partition", peerID)
+		return
+	}
+
 	rn.mu.RLock()
 	prevLogIndex := rn.nextIndex[peerID] - 1
 	var prevLogTerm int64
@@ -601,7 +641,7 @@ func (rn *RaftNode) handleAppendEntries(req *AppendRequest) {
 		NodeID:       rn.id,
 	}
 	
-	// If term is outdated, reject
+	// Reply false if term < currentTerm (§5.1)
 	if req.Term < rn.currentTerm {
 		req.ResponseCh <- response
 		return
@@ -614,14 +654,92 @@ func (rn *RaftNode) handleAppendEntries(req *AppendRequest) {
 		rn.votedFor = ""
 		rn.savePersistentState()
 		rn.resetElectionTimer()
-		
-		// Update last heartbeat time
 		rn.lastHeartbeat = time.Now()
-		
 		response.Term = rn.currentTerm
-		response.Success = true
+	}
+	
+	// Reply false if log doesn't contain an entry at prevLogIndex
+	// whose term matches prevLogTerm (§5.3)
+	if req.PrevLogIndex > 0 {
+		if req.PrevLogIndex > rn.getLastLogIndex() {
+			// We don't have the previous log entry
+			rn.logger.Printf("AppendEntries failed: missing log entry at index %d", req.PrevLogIndex)
+			req.ResponseCh <- response
+			return
+		}
 		
-		rn.logger.Printf("Received heartbeat from leader %s (term: %d)", req.LeaderID, req.Term)
+		if req.PrevLogIndex <= int64(len(rn.log)) {
+			prevEntry := rn.log[req.PrevLogIndex-1]
+			if prevEntry.Term != req.PrevLogTerm {
+				// Previous log entry term doesn't match
+				rn.logger.Printf("AppendEntries failed: term mismatch at index %d (our: %d, leader: %d)", 
+					req.PrevLogIndex, prevEntry.Term, req.PrevLogTerm)
+				req.ResponseCh <- response
+				return
+			}
+		}
+	}
+	
+	// If an existing entry conflicts with a new one (same index
+	// but different terms), delete the existing entry and all that
+	// follow it (§5.3)
+	if req.Entries != nil && len(req.Entries) > 0 {
+		for i, entry := range req.Entries {
+			entryIndex := req.PrevLogIndex + int64(i) + 1
+			
+			if entryIndex <= int64(len(rn.log)) {
+				// Check for conflict
+				existingEntry := rn.log[entryIndex-1]
+				if existingEntry.Term != entry.Term {
+					// Conflict detected - truncate log from this point
+					rn.logger.Printf("Log conflict at index %d, truncating", entryIndex)
+					rn.log = rn.log[:entryIndex-1]
+					break
+				}
+			}
+		}
+		
+		// Append any new entries not already in the log
+		for i, entry := range req.Entries {
+			entryIndex := req.PrevLogIndex + int64(i) + 1
+			
+			if entryIndex > int64(len(rn.log)) {
+				// This is a new entry, append it
+				rn.log = append(rn.log, entry)
+				rn.logger.Printf("Appended entry at index %d (term: %d, type: %s)", 
+					entry.Index, entry.Term, entry.Type)
+			}
+		}
+		
+		// Persist the updated log
+		if err := rn.logStorage.AppendEntries(req.Entries); err != nil {
+			rn.logger.Printf("Failed to persist log entries: %v", err)
+		}
+	}
+	
+	// If leaderCommit > commitIndex, set commitIndex =
+	// min(leaderCommit, index of last new entry)
+	if req.LeaderCommit > rn.commitIndex {
+		newCommitIndex := req.LeaderCommit
+		lastNewEntryIndex := rn.getLastLogIndex()
+		
+		if newCommitIndex > lastNewEntryIndex {
+			newCommitIndex = lastNewEntryIndex
+		}
+		
+		rn.commitIndex = newCommitIndex
+		rn.logger.Printf("Updated commitIndex to %d", rn.commitIndex)
+		
+		// Trigger application of newly committed entries
+		go rn.triggerApplyEntries()
+	}
+	
+	response.Success = true
+	response.LastLogIndex = rn.getLastLogIndex()
+	
+	if len(req.Entries) > 0 {
+		rn.logger.Printf("Successfully processed AppendEntries with %d entries from leader %s", 
+			len(req.Entries), req.LeaderID)
 	}
 	
 	req.ResponseCh <- response
@@ -651,5 +769,238 @@ func (rn *RaftNode) savePersistentState() {
 	
 	if err := rn.persistence.Save(state); err != nil {
 		rn.logger.Printf("Failed to save persistent state: %v", err)
+	}
+}
+
+// applyEntries applies committed log entries to the state machine
+func (rn *RaftNode) applyEntries() {
+	for {
+		select {
+		case <-rn.shutdownCh:
+			return
+		case entry := <-rn.applyEntryCh:
+			if rn.stateMachine != nil {
+				result := rn.stateMachine.Apply(entry)
+				rn.logger.Printf("Applied entry %d to state machine: %v", entry.Index, result)
+			}
+		default:
+			// Check if we have entries to apply
+			rn.mu.Lock()
+			for rn.lastApplied < rn.commitIndex {
+				rn.lastApplied++
+				if rn.lastApplied <= int64(len(rn.log)) {
+					entry := rn.log[rn.lastApplied-1]
+					if rn.stateMachine != nil {
+						rn.mu.Unlock()
+						result := rn.stateMachine.Apply(entry)
+						rn.mu.Lock()
+						rn.logger.Printf("Applied entry %d to state machine: %v", entry.Index, result)
+					}
+				}
+			}
+			rn.mu.Unlock()
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+// triggerApplyEntries triggers application of committed entries
+func (rn *RaftNode) triggerApplyEntries() {
+	// This method is called when commitIndex is updated
+	// The applyEntries goroutine will handle the actual application
+}
+
+// AppendEntry adds a new entry to the log (called by leader)
+func (rn *RaftNode) AppendEntry(entryType string, data []byte) (int64, error) {
+	rn.mu.Lock()
+	defer rn.mu.Unlock()
+
+	if rn.state != Leader {
+		return 0, fmt.Errorf("not the leader")
+	}
+
+	// Create new log entry
+	index := rn.getLastLogIndex() + 1
+	entry := &cluster.LogEntry{
+		Index:     index,
+		Term:      rn.currentTerm,
+		Type:      entryType,
+		Data:      data,
+		Timestamp: time.Now().Unix(),
+	}
+
+	// Append to local log
+	rn.log = append(rn.log, entry)
+	
+	// Persist the entry
+	if err := rn.logStorage.AppendEntries([]*cluster.LogEntry{entry}); err != nil {
+		return 0, fmt.Errorf("failed to persist entry: %w", err)
+	}
+
+	rn.logger.Printf("Leader appended entry %d (term: %d, type: %s)", index, rn.currentTerm, entryType)
+
+	// Immediately try to replicate to followers
+	go rn.replicateToFollowers()
+
+	return index, nil
+}
+
+// replicateToFollowers sends entries to all followers
+func (rn *RaftNode) replicateToFollowers() {
+	rn.mu.RLock()
+	if rn.state != Leader {
+		rn.mu.RUnlock()
+		return
+	}
+
+	peers := make(map[string]*PeerInfo)
+	for k, v := range rn.peers {
+		peers[k] = v
+	}
+	rn.mu.RUnlock()
+
+	for peerID := range peers {
+		go rn.replicateToFollower(peerID)
+	}
+}
+
+// replicateToFollower sends entries to a specific follower
+func (rn *RaftNode) replicateToFollower(peerID string) {
+	rn.mu.Lock()
+	if rn.state != Leader {
+		rn.mu.Unlock()
+		return
+	}
+
+	nextIndex := rn.nextIndex[peerID]
+	if nextIndex == 0 {
+		nextIndex = 1
+	}
+
+	prevLogIndex := nextIndex - 1
+	var prevLogTerm int64
+	if prevLogIndex > 0 && prevLogIndex <= int64(len(rn.log)) {
+		prevLogTerm = rn.log[prevLogIndex-1].Term
+	}
+
+	// Collect entries to send
+	var entries []*cluster.LogEntry
+	if nextIndex <= int64(len(rn.log)) {
+		entries = rn.log[nextIndex-1:]
+	}
+
+	term := rn.currentTerm
+	leaderCommit := rn.commitIndex
+	rn.mu.Unlock()
+
+	// Create append entries request
+	req := &AppendRequest{
+		Term:         term,
+		LeaderID:     rn.id,
+		PrevLogIndex: prevLogIndex,
+		PrevLogTerm:  prevLogTerm,
+		Entries:      entries,
+		LeaderCommit: leaderCommit,
+		ResponseCh:   make(chan *AppendResponse, 1),
+	}
+
+	// Send to follower (this would be an RPC call in real implementation)
+	// For now, we'll simulate it
+	go func() {
+		// Simulate network delay
+		time.Sleep(time.Duration(rand.Intn(50)) * time.Millisecond)
+		
+		// Simulate response (70% success rate)
+		success := rand.Float64() < 0.7
+		resp := &AppendResponse{
+			Term:         term,
+			Success:      success,
+			LastLogIndex: prevLogIndex + int64(len(entries)),
+			NodeID:       peerID,
+		}
+		
+		select {
+		case req.ResponseCh <- resp:
+		case <-time.After(1 * time.Second):
+		}
+	}()
+
+	// Wait for response
+	select {
+	case resp := <-req.ResponseCh:
+		rn.handleAppendEntriesResponse(peerID, req, resp)
+	case <-time.After(1 * time.Second):
+		rn.logger.Printf("Append entries to %s timed out", peerID)
+	}
+}
+
+// handleAppendEntriesResponse handles the response from append entries
+func (rn *RaftNode) handleAppendEntriesResponse(peerID string, req *AppendRequest, resp *AppendResponse) {
+	rn.mu.Lock()
+	defer rn.mu.Unlock()
+
+	if rn.state != Leader || resp.Term != rn.currentTerm {
+		return
+	}
+
+	if resp.Term > rn.currentTerm {
+		// Step down
+		rn.currentTerm = resp.Term
+		rn.state = Follower
+		rn.votedFor = ""
+		rn.savePersistentState()
+		rn.resetElectionTimer()
+		return
+	}
+
+	if resp.Success {
+		// Update nextIndex and matchIndex for follower
+		if len(req.Entries) > 0 {
+			rn.matchIndex[peerID] = req.PrevLogIndex + int64(len(req.Entries))
+			rn.nextIndex[peerID] = rn.matchIndex[peerID] + 1
+			
+			rn.logger.Printf("Successfully replicated %d entries to %s", len(req.Entries), peerID)
+			
+			// Check if we can advance commit index
+			rn.updateCommitIndex()
+		}
+	} else {
+		// Decrement nextIndex and retry
+		if rn.nextIndex[peerID] > 1 {
+			rn.nextIndex[peerID]--
+			rn.logger.Printf("Append entries failed for %s, decremented nextIndex to %d", peerID, rn.nextIndex[peerID])
+			
+			// Retry immediately
+			go rn.replicateToFollower(peerID)
+		}
+	}
+}
+
+// updateCommitIndex updates the commit index based on majority replication
+func (rn *RaftNode) updateCommitIndex() {
+	if rn.state != Leader {
+		return
+	}
+
+	// Find the highest index that is replicated on a majority of servers
+	for n := rn.getLastLogIndex(); n > rn.commitIndex; n-- {
+		if n <= int64(len(rn.log)) && rn.log[n-1].Term == rn.currentTerm {
+			count := 1 // Count self
+			
+			for _, matchIndex := range rn.matchIndex {
+				if matchIndex >= n {
+					count++
+				}
+			}
+			
+			if count >= rn.getMajority() {
+				rn.commitIndex = n
+				rn.logger.Printf("Leader advanced commitIndex to %d", n)
+				
+				// Trigger application of newly committed entries
+				go rn.triggerApplyEntries()
+				return
+			}
+		}
 	}
 }
