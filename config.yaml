@@ -41,7 +41,7 @@ metrics:
   port: 2112
 
 tracing:
-  enabled: false
+  enabled: true
   service_name: "kvstore"
   service_version: "1.0.0"
   environment: "development"

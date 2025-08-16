@@ -1,0 +1,66 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+docs/
+README*
+
+# Development files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+bin/
+release/
+coverage.out
+coverage.html
+coverage-*.txt
+test-results.json
+coverage-summary.txt
+
+# Data directories
+data/
+logs/
+*.log
+
+# Temporary files
+tmp/
+temp/
+.tmp
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Docker
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Dependencies (will be downloaded in container)
+vendor/
+
+# Test files
+*_test.go
+benchmarks/
+tests/
+
+# Examples
+examples/
+
+# Deployment configs (will be mounted as volumes)
+deployments/
+
+# Web assets (not needed for server)
+web/

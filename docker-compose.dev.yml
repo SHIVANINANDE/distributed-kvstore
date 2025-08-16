@@ -1,0 +1,47 @@
+version: '3.8'
+
+# Development overrides for docker-compose.yml
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  kvstore:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder  # Use builder stage for development
+    volumes:
+      - .:/app  # Mount source code for live reload
+      - kvstore_data:/app/data
+    environment:
+      - KV_LOG_LEVEL=debug
+      - KV_LOG_FORMAT=console  # Human-readable logs for development
+      - KV_METRICS_ENABLED=true
+      - KVSTORE_ENV=development
+    command: ["go", "run", "cmd/server/main.go", "-config", "config.yaml"]
+    depends_on:
+      - prometheus
+      - jaeger
+
+  # Simplified monitoring for development
+  prometheus:
+    volumes:
+      - ./deployments/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deployments/prometheus-dev.yml:/etc/prometheus/prometheus.yml:ro  # Dev config if available
+
+  grafana:
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=dev
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+
+  # Add development tools
+  adminer:
+    image: adminer:4.8.1
+    ports:
+      - "8081:8080"
+    networks:
+      - kvstore-network
+    restart: unless-stopped
+
+networks:
+  kvstore-network:
+    driver: bridge
