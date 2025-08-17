@@ -1,0 +1,1542 @@
+openapi: 3.0.3
+info:
+  title: Distributed Key-Value Store API
+  description: |
+    A high-performance, distributed key-value store API providing CRUD operations,
+    batch processing, transactions, and administrative capabilities.
+    
+    ## Features
+    - **High Performance**: Sub-millisecond latencies with 100K+ ops/sec
+    - **Strong Consistency**: ACID transactions with Raft consensus
+    - **Scalability**: Horizontal scaling with intelligent load balancing
+    - **Security**: TLS encryption, RBAC, and audit logging
+    
+    ## Authentication
+    This API supports multiple authentication methods:
+    - **API Key**: Include `X-API-Key` header
+    - **JWT**: Bearer token in `Authorization` header
+    - **mTLS**: Client certificate authentication
+    
+    ## Rate Limiting
+    - **Default**: 1000 requests per minute per client
+    - **Burst**: Up to 100 requests in 10-second window
+    - **Headers**: Rate limit status in `X-RateLimit-*` headers
+  version: 1.0.0
+  contact:
+    name: KVStore Team
+    email: team@kvstore.io
+    url: https://github.com/kvstore/distributed-kvstore
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://api.kvstore.io/v1
+    description: Production server
+  - url: https://staging-api.kvstore.io/v1
+    description: Staging server
+  - url: http://localhost:8080/v1
+    description: Local development server
+
+security:
+  - ApiKeyAuth: []
+  - BearerAuth: []
+
+paths:
+  /keys/{key}:
+    parameters:
+      - $ref: '#/components/parameters/KeyParameter'
+    
+    get:
+      summary: Get a key
+      description: Retrieve the value associated with a key
+      operationId: getKey
+      tags:
+        - Keys
+      parameters:
+        - name: consistency
+          in: query
+          description: Read consistency level
+          schema:
+            type: string
+            enum: [strong, eventual]
+            default: strong
+        - name: include_metadata
+          in: query
+          description: Include key metadata in response
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Key found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetResponse'
+              examples:
+                simple_value:
+                  summary: Simple string value
+                  value:
+                    found: true
+                    value: "Hello, World!"
+                    metadata:
+                      created_at: "2024-01-15T10:30:00Z"
+                      expires_at: null
+                      version: 1
+                with_metadata:
+                  summary: Value with metadata
+                  value:
+                    found: true
+                    value: "User profile data"
+                    metadata:
+                      created_at: "2024-01-15T10:30:00Z"
+                      updated_at: "2024-01-15T11:45:00Z"
+                      expires_at: "2024-01-16T10:30:00Z"
+                      version: 3
+                      tags:
+                        content_type: "application/json"
+                        source: "user_service"
+        '404':
+          description: Key not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetResponse'
+              example:
+                found: false
+                error: "Key not found"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    
+    put:
+      summary: Set a key
+      description: Create or update a key-value pair
+      operationId: putKey
+      tags:
+        - Keys
+      parameters:
+        - name: if_match
+          in: header
+          description: Only update if version matches (optimistic locking)
+          schema:
+            type: integer
+        - name: if_none_match
+          in: header
+          description: Only create if key doesn't exist
+          schema:
+            type: string
+            enum: ["*"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutRequest'
+            examples:
+              simple_string:
+                summary: Simple string value
+                value:
+                  value: "Hello, World!"
+              with_ttl:
+                summary: Value with expiration
+                value:
+                  value: "Temporary data"
+                  ttl_seconds: 3600
+              with_metadata:
+                summary: Value with metadata
+                value:
+                  value: "Complex data structure"
+                  ttl_seconds: 86400
+                  metadata:
+                    content_type: "application/json"
+                    source: "api_v2"
+      responses:
+        '200':
+          description: Key updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PutResponse'
+              example:
+                success: true
+                version: 2
+        '201':
+          description: Key created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PutResponse'
+              example:
+                success: true
+                version: 1
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Version conflict (optimistic locking failed)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Version mismatch"
+                details: "Expected version 5, got 3"
+        '412':
+          description: Precondition failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Precondition failed"
+                details: "Key already exists"
+        '413':
+          description: Value too large
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Value too large"
+                details: "Maximum value size is 16MB"
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    
+    delete:
+      summary: Delete a key
+      description: Remove a key-value pair
+      operationId: deleteKey
+      tags:
+        - Keys
+      parameters:
+        - name: if_match
+          in: header
+          description: Only delete if version matches
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Key deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResponse'
+              example:
+                success: true
+                existed: true
+        '404':
+          description: Key not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResponse'
+              example:
+                success: false
+                existed: false
+                error: "Key not found"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Version conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Version mismatch"
+                details: "Key was modified by another client"
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    
+    head:
+      summary: Check if key exists
+      description: Check if a key exists without retrieving its value
+      operationId: existsKey
+      tags:
+        - Keys
+      responses:
+        '200':
+          description: Key exists
+          headers:
+            X-Key-Version:
+              description: Current version of the key
+              schema:
+                type: integer
+            X-Key-Created-At:
+              description: Key creation timestamp
+              schema:
+                type: string
+                format: date-time
+            X-Key-Expires-At:
+              description: Key expiration timestamp (if applicable)
+              schema:
+                type: string
+                format: date-time
+        '404':
+          description: Key does not exist
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /keys:
+    get:
+      summary: List keys
+      description: List keys with optional prefix filtering and pagination
+      operationId: listKeys
+      tags:
+        - Keys
+      parameters:
+        - name: prefix
+          in: query
+          description: Key prefix filter
+          schema:
+            type: string
+          example: "user:"
+        - name: limit
+          in: query
+          description: Maximum number of keys to return
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+        - name: cursor
+          in: query
+          description: Pagination cursor from previous response
+          schema:
+            type: string
+        - name: include_values
+          in: query
+          description: Include values in the response
+          schema:
+            type: boolean
+            default: false
+        - name: include_metadata
+          in: query
+          description: Include metadata in the response
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Keys listed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListResponse'
+              examples:
+                keys_only:
+                  summary: Keys only
+                  value:
+                    keys: ["user:123", "user:456", "user:789"]
+                    has_more: true
+                    next_cursor: "eyJrZXkiOiJ1c2VyOjc4OSJ9"
+                with_values:
+                  summary: Keys with values
+                  value:
+                    items:
+                      - key: "user:123"
+                        value: "John Doe"
+                        metadata:
+                          created_at: "2024-01-15T10:30:00Z"
+                          version: 1
+                      - key: "user:456"
+                        value: "Jane Smith"
+                        metadata:
+                          created_at: "2024-01-15T11:15:00Z"
+                          version: 2
+                    has_more: false
+                    next_cursor: null
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /batch/get:
+    post:
+      summary: Batch get operation
+      description: Retrieve multiple keys in a single request
+      operationId: batchGet
+      tags:
+        - Batch Operations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchGetRequest'
+            example:
+              keys: ["user:123", "user:456", "user:789"]
+              include_metadata: true
+      responses:
+        '200':
+          description: Batch get completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchGetResponse'
+              example:
+                results:
+                  - key: "user:123"
+                    found: true
+                    value: "John Doe"
+                    metadata:
+                      version: 1
+                  - key: "user:456"
+                    found: true
+                    value: "Jane Smith"
+                    metadata:
+                      version: 2
+                  - key: "user:789"
+                    found: false
+                success_count: 2
+                error_count: 0
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /batch/put:
+    post:
+      summary: Batch put operation
+      description: Create or update multiple keys in a single request
+      operationId: batchPut
+      tags:
+        - Batch Operations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchPutRequest'
+            example:
+              items:
+                - key: "user:123"
+                  value: "John Doe Updated"
+                  ttl_seconds: 3600
+                - key: "user:456"
+                  value: "Jane Smith Updated"
+                - key: "user:789"
+                  value: "New User"
+                  metadata:
+                    source: "batch_import"
+      responses:
+        '200':
+          description: Batch put completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchPutResponse'
+              example:
+                success_count: 2
+                error_count: 1
+                errors:
+                  - key: "user:456"
+                    error: "Permission denied"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /batch/delete:
+    post:
+      summary: Batch delete operation
+      description: Delete multiple keys in a single request
+      operationId: batchDelete
+      tags:
+        - Batch Operations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchDeleteRequest'
+            example:
+              keys: ["user:123", "user:456", "temp:*"]
+      responses:
+        '200':
+          description: Batch delete completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchDeleteResponse'
+              example:
+                success_count: 2
+                error_count: 1
+                errors:
+                  - key: "temp:*"
+                    error: "Wildcard deletion not allowed"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /transaction:
+    post:
+      summary: Execute transaction
+      description: Execute multiple operations atomically
+      operationId: executeTransaction
+      tags:
+        - Transactions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransactionRequest'
+            example:
+              operations:
+                - type: "put"
+                  key: "user:123:profile"
+                  value: "Updated profile"
+                  conditions:
+                    - type: "version_match"
+                      value: 5
+                - type: "delete"
+                  key: "user:123:temp_data"
+                - type: "put"
+                  key: "user:123:last_login"
+                  value: "2024-01-15T10:30:00Z"
+                  ttl_seconds: 86400
+      responses:
+        '200':
+          description: Transaction completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionResponse'
+              example:
+                success: true
+                operations_completed: 3
+                version: 6
+        '400':
+          description: Transaction validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Transaction validation failed"
+                details: "Invalid operation type: 'invalid_op'"
+        '409':
+          description: Transaction conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Transaction conflict"
+                details: "Condition failed: version_match on key 'user:123:profile'"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /watch/{prefix}:
+    get:
+      summary: Watch for key changes
+      description: Stream real-time notifications for key changes
+      operationId: watchKeys
+      tags:
+        - Streaming
+      parameters:
+        - name: prefix
+          in: path
+          required: true
+          description: Key prefix to watch
+          schema:
+            type: string
+          example: "user:"
+        - name: events
+          in: query
+          description: Types of events to watch
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [put, delete, expire]
+            default: ["put", "delete", "expire"]
+        - name: include_values
+          in: query
+          description: Include values in change events
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Event stream established
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              examples:
+                key_change:
+                  summary: Key change event
+                  value: |
+                    event: put
+                    data: {"key": "user:123", "value": "John Doe", "version": 2}
+                    
+                    event: delete
+                    data: {"key": "user:456", "version": 3}
+                    
+                    event: expire
+                    data: {"key": "user:temp", "version": 1}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/backup:
+    post:
+      summary: Create backup
+      description: Create a backup of the key-value store
+      operationId: createBackup
+      tags:
+        - Administration
+      security:
+        - ApiKeyAuth: ['admin']
+        - BearerAuth: ['admin']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BackupRequest'
+            example:
+              path: "/backups/kvstore-2024-01-15.backup"
+              compression: "zstd"
+              encryption: true
+      responses:
+        '202':
+          description: Backup initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupResponse'
+              example:
+                success: true
+                backup_id: "backup-2024-01-15-123456"
+                path: "/backups/kvstore-2024-01-15.backup"
+                estimated_size: 1073741824
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/restore:
+    post:
+      summary: Restore from backup
+      description: Restore the key-value store from a backup
+      operationId: restoreBackup
+      tags:
+        - Administration
+      security:
+        - ApiKeyAuth: ['admin']
+        - BearerAuth: ['admin']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestoreRequest'
+            example:
+              path: "/backups/kvstore-2024-01-15.backup"
+              overwrite_existing: false
+      responses:
+        '202':
+          description: Restore initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestoreResponse'
+              example:
+                success: true
+                restore_id: "restore-2024-01-15-123456"
+                estimated_keys: 1000000
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/status:
+    get:
+      summary: Get cluster status
+      description: Retrieve the current status of the cluster
+      operationId: getStatus
+      tags:
+        - Administration
+      responses:
+        '200':
+          description: Cluster status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+              example:
+                cluster:
+                  node_id: "node-1"
+                  role: "leader"
+                  state: "running"
+                  peers: ["node-2", "node-3"]
+                  leader_id: "node-1"
+                performance:
+                  uptime_seconds: 86400
+                  total_keys: 1000000
+                  operations_per_second: 15000
+                  average_latency_ms: 0.5
+                storage:
+                  total_size_bytes: 10737418240
+                  used_size_bytes: 5368709120
+                  compression_ratio: 2.1
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/metrics:
+    get:
+      summary: Get performance metrics
+      description: Retrieve detailed performance metrics
+      operationId: getMetrics
+      tags:
+        - Administration
+      parameters:
+        - name: format
+          in: query
+          description: Metrics format
+          schema:
+            type: string
+            enum: [prometheus, json]
+            default: json
+        - name: duration
+          in: query
+          description: Time range for metrics (in seconds)
+          schema:
+            type: integer
+            minimum: 60
+            maximum: 86400
+            default: 300
+      responses:
+        '200':
+          description: Metrics retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetricsResponse'
+            text/plain:
+              schema:
+                type: string
+              example: |
+                # HELP kvstore_operations_total Total number of operations
+                # TYPE kvstore_operations_total counter
+                kvstore_operations_total{type="get"} 1000000
+                kvstore_operations_total{type="put"} 500000
+                kvstore_operations_total{type="delete"} 100000
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /health:
+    get:
+      summary: Health check
+      description: Check if the service is healthy
+      operationId: healthCheck
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                healthy: true
+                status: "OK"
+                uptime_seconds: 86400
+                version: "1.0.0"
+                checks:
+                  storage: "OK"
+                  consensus: "OK"
+                  network: "OK"
+        '503':
+          description: Service is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                healthy: false
+                status: "DEGRADED"
+                uptime_seconds: 3600
+                version: "1.0.0"
+                checks:
+                  storage: "OK"
+                  consensus: "FAILED"
+                  network: "OK"
+                errors:
+                  - "Consensus: Unable to reach quorum"
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for authentication
+    
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token for authentication
+
+  parameters:
+    KeyParameter:
+      name: key
+      in: path
+      required: true
+      description: The key to operate on
+      schema:
+        type: string
+        maxLength: 1024
+        pattern: '^[a-zA-Z0-9:._-]+$'
+      example: "user:123:profile"
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "Invalid request"
+            details: "Key format is invalid"
+    
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "Unauthorized"
+            details: "Invalid or missing authentication credentials"
+    
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "Forbidden"
+            details: "Insufficient permissions for this operation"
+    
+    RateLimited:
+      description: Rate limit exceeded
+      headers:
+        X-RateLimit-Limit:
+          description: Request limit per time window
+          schema:
+            type: integer
+        X-RateLimit-Remaining:
+          description: Remaining requests in current window
+          schema:
+            type: integer
+        X-RateLimit-Reset:
+          description: Time when rate limit resets (Unix timestamp)
+          schema:
+            type: integer
+        Retry-After:
+          description: Seconds to wait before retrying
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "Rate limit exceeded"
+            details: "Maximum of 1000 requests per minute exceeded"
+    
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "Internal server error"
+            details: "An unexpected error occurred"
+
+  schemas:
+    PutRequest:
+      type: object
+      required:
+        - value
+      properties:
+        value:
+          type: string
+          maxLength: 16777216  # 16MB
+          description: The value to store
+          example: "Hello, World!"
+        ttl_seconds:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+          description: Time to live in seconds
+          example: 3600
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: User-defined metadata
+          example:
+            content_type: "text/plain"
+            source: "api"
+
+    PutResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Whether the operation succeeded
+        version:
+          type: integer
+          description: New version of the key
+          example: 2
+        error:
+          type: string
+          description: Error message if operation failed
+
+    GetResponse:
+      type: object
+      properties:
+        found:
+          type: boolean
+          description: Whether the key was found
+        value:
+          type: string
+          description: The stored value
+        metadata:
+          $ref: '#/components/schemas/KeyMetadata'
+        error:
+          type: string
+          description: Error message if operation failed
+
+    DeleteResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Whether the operation succeeded
+        existed:
+          type: boolean
+          description: Whether the key existed before deletion
+        error:
+          type: string
+          description: Error message if operation failed
+
+    ListResponse:
+      type: object
+      properties:
+        keys:
+          type: array
+          items:
+            type: string
+          description: List of keys (when include_values=false)
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/KeyValuePair'
+          description: List of key-value pairs (when include_values=true)
+        has_more:
+          type: boolean
+          description: Whether there are more results
+        next_cursor:
+          type: string
+          nullable: true
+          description: Cursor for next page of results
+
+    KeyValuePair:
+      type: object
+      properties:
+        key:
+          type: string
+          description: The key
+        value:
+          type: string
+          description: The value
+        metadata:
+          $ref: '#/components/schemas/KeyMetadata'
+
+    KeyMetadata:
+      type: object
+      properties:
+        created_at:
+          type: string
+          format: date-time
+          description: When the key was created
+        updated_at:
+          type: string
+          format: date-time
+          description: When the key was last updated
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the key expires
+        version:
+          type: integer
+          description: Current version of the key
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+          description: User-defined metadata tags
+
+    BatchGetRequest:
+      type: object
+      required:
+        - keys
+      properties:
+        keys:
+          type: array
+          items:
+            type: string
+          maxItems: 1000
+          description: List of keys to retrieve
+        include_metadata:
+          type: boolean
+          default: false
+          description: Include metadata in response
+
+    BatchGetResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchGetResult'
+        success_count:
+          type: integer
+          description: Number of successful operations
+        error_count:
+          type: integer
+          description: Number of failed operations
+
+    BatchGetResult:
+      type: object
+      properties:
+        key:
+          type: string
+          description: The key
+        found:
+          type: boolean
+          description: Whether the key was found
+        value:
+          type: string
+          description: The value (if found)
+        metadata:
+          $ref: '#/components/schemas/KeyMetadata'
+        error:
+          type: string
+          description: Error message (if failed)
+
+    BatchPutRequest:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchPutItem'
+          maxItems: 1000
+          description: List of items to store
+
+    BatchPutItem:
+      type: object
+      required:
+        - key
+        - value
+      properties:
+        key:
+          type: string
+          maxLength: 1024
+          description: The key
+        value:
+          type: string
+          maxLength: 16777216
+          description: The value
+        ttl_seconds:
+          type: integer
+          minimum: 1
+          description: Time to live in seconds
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: User-defined metadata
+
+    BatchPutResponse:
+      type: object
+      properties:
+        success_count:
+          type: integer
+          description: Number of successful operations
+        error_count:
+          type: integer
+          description: Number of failed operations
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchError'
+
+    BatchDeleteRequest:
+      type: object
+      required:
+        - keys
+      properties:
+        keys:
+          type: array
+          items:
+            type: string
+          maxItems: 1000
+          description: List of keys to delete
+
+    BatchDeleteResponse:
+      type: object
+      properties:
+        success_count:
+          type: integer
+          description: Number of successful operations
+        error_count:
+          type: integer
+          description: Number of failed operations
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchError'
+
+    BatchError:
+      type: object
+      properties:
+        key:
+          type: string
+          description: The key that failed
+        error:
+          type: string
+          description: Error message
+
+    TransactionRequest:
+      type: object
+      required:
+        - operations
+      properties:
+        operations:
+          type: array
+          items:
+            $ref: '#/components/schemas/TransactionOperation'
+          maxItems: 100
+          description: List of operations to execute atomically
+
+    TransactionOperation:
+      type: object
+      required:
+        - type
+        - key
+      properties:
+        type:
+          type: string
+          enum: [put, delete]
+          description: Type of operation
+        key:
+          type: string
+          description: The key to operate on
+        value:
+          type: string
+          description: The value (for put operations)
+        ttl_seconds:
+          type: integer
+          description: Time to live (for put operations)
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Condition'
+          description: Conditions that must be met
+
+    Condition:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          enum: [key_exists, key_not_exists, version_match, value_match]
+          description: Type of condition
+        value:
+          type: string
+          description: Expected value for the condition
+
+    TransactionResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Whether the transaction succeeded
+        operations_completed:
+          type: integer
+          description: Number of operations completed
+        version:
+          type: integer
+          description: Final version after transaction
+        error:
+          type: string
+          description: Error message if transaction failed
+
+    BackupRequest:
+      type: object
+      properties:
+        path:
+          type: string
+          description: Path where backup should be stored
+        compression:
+          type: string
+          enum: [none, gzip, zstd]
+          default: zstd
+          description: Compression algorithm
+        encryption:
+          type: boolean
+          default: false
+          description: Whether to encrypt the backup
+
+    BackupResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Whether backup was initiated successfully
+        backup_id:
+          type: string
+          description: Unique identifier for the backup
+        path:
+          type: string
+          description: Actual path where backup is stored
+        estimated_size:
+          type: integer
+          description: Estimated size of backup in bytes
+        error:
+          type: string
+          description: Error message if backup failed
+
+    RestoreRequest:
+      type: object
+      required:
+        - path
+      properties:
+        path:
+          type: string
+          description: Path to backup file
+        overwrite_existing:
+          type: boolean
+          default: false
+          description: Whether to overwrite existing keys
+
+    RestoreResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Whether restore was initiated successfully
+        restore_id:
+          type: string
+          description: Unique identifier for the restore
+        estimated_keys:
+          type: integer
+          description: Estimated number of keys to restore
+        error:
+          type: string
+          description: Error message if restore failed
+
+    StatusResponse:
+      type: object
+      properties:
+        cluster:
+          $ref: '#/components/schemas/ClusterStatus'
+        performance:
+          $ref: '#/components/schemas/PerformanceStatus'
+        storage:
+          $ref: '#/components/schemas/StorageStatus'
+
+    ClusterStatus:
+      type: object
+      properties:
+        node_id:
+          type: string
+          description: Current node identifier
+        role:
+          type: string
+          enum: [leader, follower, candidate]
+          description: Current role in cluster
+        state:
+          type: string
+          enum: [starting, running, stopping, stopped]
+          description: Current state
+        peers:
+          type: array
+          items:
+            type: string
+          description: List of peer node IDs
+        leader_id:
+          type: string
+          description: Current leader node ID
+        last_applied:
+          type: integer
+          description: Last applied log index
+        commit_index:
+          type: integer
+          description: Current commit index
+
+    PerformanceStatus:
+      type: object
+      properties:
+        uptime_seconds:
+          type: integer
+          description: Server uptime in seconds
+        total_keys:
+          type: integer
+          description: Total number of keys stored
+        operations_per_second:
+          type: number
+          description: Current operations per second
+        average_latency_ms:
+          type: number
+          description: Average latency in milliseconds
+
+    StorageStatus:
+      type: object
+      properties:
+        total_size_bytes:
+          type: integer
+          description: Total storage capacity in bytes
+        used_size_bytes:
+          type: integer
+          description: Used storage in bytes
+        compression_ratio:
+          type: number
+          description: Current compression ratio
+
+    MetricsResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          description: Timestamp of metrics collection
+        operations:
+          $ref: '#/components/schemas/OperationMetrics'
+        performance:
+          $ref: '#/components/schemas/PerformanceMetrics'
+        resources:
+          $ref: '#/components/schemas/ResourceMetrics'
+
+    OperationMetrics:
+      type: object
+      properties:
+        total_operations:
+          type: integer
+          description: Total operations since startup
+        operations_per_second:
+          type: number
+          description: Current operations per second
+        error_rate:
+          type: number
+          description: Current error rate percentage
+        by_type:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Operations count by type
+
+    PerformanceMetrics:
+      type: object
+      properties:
+        latency_percentiles:
+          type: object
+          properties:
+            p50:
+              type: number
+              description: 50th percentile latency in milliseconds
+            p95:
+              type: number
+              description: 95th percentile latency in milliseconds
+            p99:
+              type: number
+              description: 99th percentile latency in milliseconds
+        throughput:
+          type: number
+          description: Current throughput in MB/s
+
+    ResourceMetrics:
+      type: object
+      properties:
+        cpu_usage_percent:
+          type: number
+          description: CPU usage percentage
+        memory_usage_bytes:
+          type: integer
+          description: Memory usage in bytes
+        disk_usage_bytes:
+          type: integer
+          description: Disk usage in bytes
+        network_io_bytes:
+          type: integer
+          description: Network I/O in bytes
+
+    HealthResponse:
+      type: object
+      properties:
+        healthy:
+          type: boolean
+          description: Overall health status
+        status:
+          type: string
+          enum: [OK, DEGRADED, FAILED]
+          description: Status description
+        uptime_seconds:
+          type: integer
+          description: Uptime in seconds
+        version:
+          type: string
+          description: Service version
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+          description: Individual component health checks
+        errors:
+          type: array
+          items:
+            type: string
+          description: List of current errors
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Error message
+        details:
+          type: string
+          description: Detailed error information
+        code:
+          type: string
+          description: Error code for programmatic handling
+        timestamp:
+          type: string
+          format: date-time
+          description: Error timestamp
+        trace_id:
+          type: string
+          description: Request trace ID for debugging
+
+tags:
+  - name: Keys
+    description: Basic key-value operations
+  - name: Batch Operations
+    description: Batch processing for multiple keys
+  - name: Transactions
+    description: ACID transaction support
+  - name: Streaming
+    description: Real-time change notifications
+  - name: Administration
+    description: Administrative operations
+  - name: Health
+    description: Health and status endpoints
