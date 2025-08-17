@@ -1,0 +1,80 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kvstore-dev
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: kvstore
+    environment: dev
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: kvstore
+  
+  source:
+    repoURL: https://github.com/example/distributed-kvstore
+    targetRevision: develop
+    path: config-management/kustomize/overlays/dev
+    
+    # Alternative: Use Helm
+    # helm:
+    #   releaseName: kvstore-dev
+    #   valueFiles:
+    #     - values-dev.yaml
+    #   parameters:
+    #     - name: global.environment
+    #       value: dev
+    #     - name: cluster.size
+    #       value: "3"
+    #     - name: persistence.size
+    #       value: "10Gi"
+  
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kvstore-dev
+  
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  
+  revisionHistoryLimit: 10
+  
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      managedFieldsManagers:
+        - kube-controller-manager
+    - group: ""
+      kind: Secret
+      name: kvstore-secrets
+      jsonPointers:
+        - /data
+  
+  info:
+    - name: Environment
+      value: Development
+    - name: Owner
+      value: Platform Team
+    - name: Documentation
+      value: https://docs.example.com/kvstore
+  
+  operation:
+    initiatedBy:
+      username: argocd
+    retry:
+      limit: 5

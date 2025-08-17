@@ -1,0 +1,263 @@
+# Default values for kvstore chart
+
+# Global configuration
+global:
+  # Image registry and repository
+  imageRegistry: "ghcr.io"
+  imageRepository: "distributed-kvstore/kvstore"
+  imageTag: "latest"
+  imagePullPolicy: "IfNotPresent"
+  
+  # Environment
+  environment: "dev"
+  
+  # Security context
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+
+# Cluster configuration
+cluster:
+  # Number of nodes in the cluster
+  size: 3
+  # Replication factor for data
+  replicationFactor: 2
+  # Enable automatic scaling
+  autoscaling:
+    enabled: false
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+# Image configuration
+image:
+  registry: ""  # Override global.imageRegistry if set
+  repository: ""  # Override global.imageRepository if set
+  tag: ""  # Override global.imageTag if set
+  pullPolicy: ""  # Override global.imagePullPolicy if set
+  pullSecrets: []
+
+# Service configuration
+service:
+  type: ClusterIP
+  ports:
+    api: 8080
+    grpc: 9090
+    metrics: 8081
+    health: 8082
+  annotations: {}
+  loadBalancerIP: ""
+  loadBalancerSourceRanges: []
+
+# Ingress configuration
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: kvstore.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+    # - secretName: kvstore-tls
+    #   hosts:
+    #     - kvstore.local
+
+# Persistence configuration
+persistence:
+  enabled: true
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 20Gi
+  annotations: {}
+  # existingClaim: ""
+
+# Resource configuration
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+
+# Node selection and scheduling
+nodeSelector: {}
+tolerations: []
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - kvstore
+          topologyKey: kubernetes.io/hostname
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+  # maxUnavailable: 1
+
+# Service account
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# RBAC
+rbac:
+  create: true
+  rules: []
+
+# Security
+security:
+  # Pod security context
+  podSecurityContext: {}
+  # Container security context
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+  
+  # Network policies
+  networkPolicy:
+    enabled: true
+    ingress: []
+    egress: []
+  
+  # TLS configuration
+  tls:
+    enabled: false
+    secretName: ""
+    crt: ""
+    key: ""
+
+# Configuration
+config:
+  # Log level
+  logLevel: "INFO"
+  # Log format
+  logFormat: "json"
+  
+  # Storage configuration
+  storage:
+    engine: "badger"
+    dataPath: "/data"
+    syncWrites: true
+    compressionEnabled: true
+    encryptionEnabled: true
+  
+  # Network configuration
+  network:
+    api:
+      bindAddress: "0.0.0.0"
+      tlsEnabled: false
+    grpc:
+      bindAddress: "0.0.0.0"
+      tlsEnabled: false
+  
+  # Raft configuration
+  raft:
+    electionTimeout: "1s"
+    heartbeatTimeout: "500ms"
+    leaderLeaseTimeout: "500ms"
+    commitTimeout: "50ms"
+    maxAppendEntries: 64
+    snapshotInterval: "120s"
+    snapshotThreshold: 8192
+  
+  # Performance configuration
+  performance:
+    maxConnections: 1000
+    readTimeout: "30s"
+    writeTimeout: "30s"
+    idleTimeout: "60s"
+    batchSize: 100
+
+# Secrets configuration
+secrets:
+  # Encryption key for data at rest
+  encryptionKey: ""
+  # TLS certificate
+  tlsCert: ""
+  # TLS private key
+  tlsKey: ""
+
+# Monitoring configuration
+monitoring:
+  enabled: true
+  
+  # Prometheus configuration
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+      scrapeTimeout: 10s
+      labels: {}
+      annotations: {}
+    
+    prometheusRule:
+      enabled: true
+      labels: {}
+      rules: []
+  
+  # Grafana configuration
+  grafana:
+    enabled: false
+    dashboards:
+      enabled: true
+
+# Tracing configuration
+tracing:
+  enabled: false
+  jaeger:
+    endpoint: "http://jaeger-collector:14268/api/traces"
+    samplingRate: 0.1
+
+# Health checks
+healthChecks:
+  liveness:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+  
+  readiness:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+    successThreshold: 1
+
+# Backup configuration
+backup:
+  enabled: false
+  schedule: "0 2 * * *"
+  s3:
+    bucket: ""
+    prefix: ""
+    region: ""
+  retention:
+    days: 30
+
+# Testing
+testing:
+  enabled: false
+  image: "busybox:1.35"

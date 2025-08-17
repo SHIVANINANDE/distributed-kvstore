@@ -1,0 +1,206 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "kvstore.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kvstore.labels" . | nindent 4 }}
+  {{- with .Values.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  serviceName: {{ include "kvstore.fullname" . }}-headless
+  replicas: {{ .Values.cluster.size }}
+  {{- if .Values.cluster.autoscaling.enabled }}
+  # Note: HPA will override this
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "kvstore.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kvstore.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.service.ports.metrics | quote }}
+        prometheus.io/path: "/metrics"
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "kvstore.serviceAccountName" . }}
+      {{- with .Values.security.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 30
+      initContainers:
+        - name: init-kvstore
+          image: {{ include "kvstore.image" . }}
+          imagePullPolicy: {{ include "kvstore.imagePullPolicy" . }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Initializing KVStore node..."
+              # Check if data directory exists and is writable
+              if [ ! -d "/data" ]; then
+                mkdir -p /data
+              fi
+              if [ ! -w "/data" ]; then
+                echo "Error: /data is not writable"
+                exit 1
+              fi
+              echo "Initialization complete"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          {{- with .Values.security.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      containers:
+        - name: kvstore
+          image: {{ include "kvstore.image" . }}
+          imagePullPolicy: {{ include "kvstore.imagePullPolicy" . }}
+          ports:
+            - name: api
+              containerPort: {{ .Values.service.ports.api }}
+              protocol: TCP
+            - name: grpc
+              containerPort: {{ .Values.service.ports.grpc }}
+              protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.service.ports.metrics }}
+              protocol: TCP
+            - name: health
+              containerPort: {{ .Values.service.ports.health }}
+              protocol: TCP
+          env:
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: CLUSTER_SIZE
+              value: {{ .Values.cluster.size | quote }}
+            - name: ENVIRONMENT
+              value: {{ .Values.global.environment | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.config.logLevel | quote }}
+            - name: LOG_FORMAT
+              value: {{ .Values.config.logFormat | quote }}
+            {{- if .Values.monitoring.enabled }}
+            - name: METRICS_ENABLED
+              value: "true"
+            - name: METRICS_PORT
+              value: {{ .Values.service.ports.metrics | quote }}
+            {{- end }}
+            {{- if .Values.tracing.enabled }}
+            - name: TRACING_ENABLED
+              value: "true"
+            - name: JAEGER_ENDPOINT
+              value: {{ .Values.tracing.jaeger.endpoint | quote }}
+            - name: JAEGER_SAMPLING_RATE
+              value: {{ .Values.tracing.jaeger.samplingRate | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /etc/kvstore
+              readOnly: true
+            - name: secrets
+              mountPath: /etc/kvstore/secrets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          {{- if .Values.healthChecks.liveness.enabled }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: {{ .Values.healthChecks.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.healthChecks.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.healthChecks.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.healthChecks.liveness.failureThreshold }}
+            successThreshold: {{ .Values.healthChecks.liveness.successThreshold }}
+          {{- end }}
+          {{- if .Values.healthChecks.readiness.enabled }}
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: health
+            initialDelaySeconds: {{ .Values.healthChecks.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.healthChecks.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.healthChecks.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.healthChecks.readiness.failureThreshold }}
+            successThreshold: {{ .Values.healthChecks.readiness.successThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- with .Values.security.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "kvstore.fullname" . }}-config
+        - name: secrets
+          secret:
+            secretName: {{ include "kvstore.fullname" . }}-secrets
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- if .Values.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        {{- with .Values.persistence.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      spec:
+        accessModes:
+          - {{ .Values.persistence.accessMode }}
+        {{- if .Values.persistence.storageClass }}
+        storageClassName: {{ .Values.persistence.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
+  {{- else }}
+        - name: data
+          emptyDir: {}
+  {{- end }}
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0

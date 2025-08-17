@@ -1,0 +1,391 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.25'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Code Quality and Testing
+  test:
+    name: Test & Code Quality
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.24', '1.25']
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ matrix.go-version }}
+
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-${{ matrix.go-version }}-
+
+    - name: Download dependencies
+      run: |
+        go mod download
+        go mod verify
+
+    - name: Run go vet
+      run: go vet ./...
+
+    - name: Run staticcheck
+      uses: dominikh/staticcheck-action@v1.3.0
+      with:
+        version: "2023.1.6"
+        install-go: false
+
+    - name: Run golangci-lint
+      uses: golangci/golangci-lint-action@v3
+      with:
+        version: latest
+        args: --timeout=10m
+
+    - name: Run tests
+      run: |
+        go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+
+    - name: Generate test report
+      uses: mikepenz/action-junit-report@v4
+      if: success() || failure()
+      with:
+        report_paths: '**/test-results.xml'
+        check_name: 'Test Results (Go ${{ matrix.go-version }})'
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        files: ./coverage.out
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+    - name: Run integration tests
+      run: |
+        make test-integration
+      env:
+        TEST_TIMEOUT: 30m
+
+    - name: Run benchmark tests
+      run: |
+        go test -bench=. -benchmem ./... > benchmark.txt
+        
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v3
+      with:
+        name: benchmark-results-${{ matrix.go-version }}
+        path: benchmark.txt
+
+  # Security Scanning
+  security:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Run Gosec Security Scanner
+      uses: securecodewarrior/github-action-gosec@master
+      with:
+        args: '-fmt sarif -out gosec.sarif ./...'
+
+    - name: Upload Gosec results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: gosec.sarif
+
+    - name: Run Trivy vulnerability scanner in repo mode
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+    - name: Check for known vulnerabilities
+      run: |
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        govulncheck ./...
+
+    - name: OWASP Dependency Check
+      uses: dependency-check/Dependency-Check_Action@main
+      with:
+        project: 'distributed-kvstore'
+        path: '.'
+        format: 'SARIF'
+        out: 'dependency-check-report.sarif'
+
+    - name: Upload dependency check results
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: dependency-check-report.sarif
+
+  # Build and Test Docker Images
+  build:
+    name: Build & Test Images
+    runs-on: ubuntu-latest
+    needs: [test, security]
+    strategy:
+      matrix:
+        component: [kvstore, kvstore-proxy, kvstore-operator, kvstore-backup]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.component }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./docker/Dockerfile.${{ matrix.component }}
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        build-args: |
+          BUILDTIME=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+          VERSION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
+          REVISION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.revision'] }}
+
+    - name: Test Docker image
+      run: |
+        docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.component }}:${{ github.sha }} --version
+
+    - name: Run container security scan
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.component }}:${{ github.sha }}
+        format: 'sarif'
+        output: 'trivy-image-${{ matrix.component }}.sarif'
+
+    - name: Upload image scan results
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-image-${{ matrix.component }}.sarif'
+
+  # Kubernetes Manifests Validation
+  k8s-validation:
+    name: Kubernetes Validation
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+
+    - name: Set up Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: 'v3.12.0'
+
+    - name: Validate Kubernetes manifests
+      run: |
+        find k8s/manifests -name "*.yaml" -exec kubectl apply --dry-run=client --validate=true -f {} \;
+
+    - name: Lint Kubernetes manifests with kubeval
+      run: |
+        wget https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz
+        tar xf kubeval-linux-amd64.tar.gz
+        ./kubeval k8s/manifests/*.yaml
+
+    - name: Run kube-score analysis
+      run: |
+        wget https://github.com/zegl/kube-score/releases/download/v1.16.1/kube-score_1.16.1_linux_amd64.tar.gz
+        tar -xzf kube-score_1.16.1_linux_amd64.tar.gz
+        ./kube-score score k8s/manifests/*.yaml
+
+    - name: Validate CRDs
+      run: |
+        kubectl apply --dry-run=server --validate=true -f k8s/operator/crd.yaml
+
+    - name: Policy validation with OPA Conftest
+      run: |
+        wget https://github.com/open-policy-agent/conftest/releases/download/v0.46.0/conftest_0.46.0_Linux_x86_64.tar.gz
+        tar xzf conftest_0.46.0_Linux_x86_64.tar.gz
+        ./conftest verify --policy policies/ k8s/manifests/*.yaml
+
+  # End-to-End Testing
+  e2e-test:
+    name: End-to-End Testing
+    runs-on: ubuntu-latest
+    needs: [build, k8s-validation]
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Create k3s cluster
+      uses: nolar/setup-k3d-k3s@v1
+      with:
+        version: v1.27
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Deploy to test cluster
+      run: |
+        kubectl apply -f k8s/manifests/rbac.yaml
+        kubectl apply -f k8s/manifests/configmaps.yaml
+        kubectl apply -f k8s/manifests/secrets.yaml
+        kubectl apply -f k8s/manifests/pvc.yaml
+        kubectl apply -f k8s/manifests/services.yaml
+        kubectl apply -f k8s/operator/crd.yaml
+        kubectl apply -f k8s/deploy.yaml
+
+    - name: Wait for deployment
+      run: |
+        kubectl wait --for=condition=available --timeout=300s deployment/kvstore-operator -n kvstore
+        kubectl wait --for=condition=ready --timeout=600s kvstore/production-cluster -n kvstore
+
+    - name: Run E2E tests
+      run: |
+        go test -v -timeout=30m ./test/e2e/...
+      env:
+        KUBECONFIG: ${{ env.KUBECONFIG }}
+
+    - name: Collect logs on failure
+      if: failure()
+      run: |
+        kubectl logs -l app=kvstore -n kvstore --previous=false
+        kubectl describe kvstore production-cluster -n kvstore
+        kubectl get events -n kvstore --sort-by='.lastTimestamp'
+
+  # Performance Testing
+  performance:
+    name: Performance Testing
+    runs-on: ubuntu-latest
+    needs: e2e-test
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Run performance tests
+      run: |
+        go test -v -timeout=30m -bench=. -benchmem ./test/performance/...
+
+    - name: Run load tests with k6
+      run: |
+        docker run --rm -v $PWD/test/load:/scripts grafana/k6 run /scripts/load-test.js
+
+    - name: Generate performance report
+      run: |
+        go run ./cmd/perf-report/ --input=performance-results.json --output=performance-report.html
+
+    - name: Upload performance results
+      uses: actions/upload-artifact@v3
+      with:
+        name: performance-results
+        path: |
+          performance-results.json
+          performance-report.html
+
+  # Notification
+  notify:
+    name: Notify
+    runs-on: ubuntu-latest
+    needs: [test, security, build, k8s-validation, e2e-test]
+    if: always()
+    
+    steps:
+    - name: Notify Slack on success
+      if: ${{ needs.test.result == 'success' && needs.security.result == 'success' && needs.build.result == 'success' }}
+      uses: 8398a7/action-slack@v3
+      with:
+        status: success
+        channel: '#ci-cd'
+        message: |
+          ✅ CI Pipeline succeeded for ${{ github.repository }}
+          📝 Commit: ${{ github.sha }}
+          🌿 Branch: ${{ github.ref }}
+          👤 Author: ${{ github.actor }}
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+    - name: Notify Slack on failure
+      if: ${{ needs.test.result == 'failure' || needs.security.result == 'failure' || needs.build.result == 'failure' }}
+      uses: 8398a7/action-slack@v3
+      with:
+        status: failure
+        channel: '#ci-cd'
+        message: |
+          ❌ CI Pipeline failed for ${{ github.repository }}
+          📝 Commit: ${{ github.sha }}
+          🌿 Branch: ${{ github.ref }}
+          👤 Author: ${{ github.actor }}
+          🔗 Logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

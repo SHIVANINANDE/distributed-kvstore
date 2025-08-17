@@ -1,0 +1,466 @@
+name: Release & Semantic Versioning
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Release type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+        - patch
+        - minor
+        - major
+        - prerelease
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Determine Release Version
+  version:
+    name: Determine Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      changelog: ${{ steps.changelog.outputs.changelog }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Install semantic-release
+      run: |
+        npm install -g semantic-release @semantic-release/changelog @semantic-release/git @semantic-release/github @semantic-release/exec
+
+    - name: Configure semantic-release
+      run: |
+        cat > .releaserc.json << 'EOF'
+        {
+          "branches": ["main"],
+          "plugins": [
+            "@semantic-release/commit-analyzer",
+            "@semantic-release/release-notes-generator",
+            "@semantic-release/changelog",
+            [
+              "@semantic-release/exec",
+              {
+                "prepareCmd": "echo ${nextRelease.version} > VERSION && echo 'VERSION=${nextRelease.version}' >> $GITHUB_ENV"
+              }
+            ],
+            [
+              "@semantic-release/git",
+              {
+                "assets": ["CHANGELOG.md", "VERSION"],
+                "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+              }
+            ],
+            "@semantic-release/github"
+          ]
+        }
+        EOF
+
+    - name: Run semantic-release (dry-run)
+      run: semantic-release --dry-run
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Get version from semantic-release
+      id: version
+      run: |
+        if [ -f VERSION ]; then
+          VERSION=$(cat VERSION)
+        else
+          # Fallback to manual versioning if no conventional commits
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          VERSION=$(echo $LATEST_TAG | sed 's/v//')
+          
+          if [ "${{ github.event.inputs.release_type }}" = "major" ]; then
+            VERSION=$(echo $VERSION | awk -F. '{print ($1+1)".0.0"}')
+          elif [ "${{ github.event.inputs.release_type }}" = "minor" ]; then
+            VERSION=$(echo $VERSION | awk -F. '{print $1"."($2+1)".0"}')
+          else
+            VERSION=$(echo $VERSION | awk -F. '{print $1"."$2"."($3+1)}')
+          fi
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        if [ -f CHANGELOG.md ]; then
+          CHANGELOG=$(head -n 50 CHANGELOG.md)
+        else
+          CHANGELOG="## Changes\n\n$(git log --oneline --since='last week' | head -n 10)"
+        fi
+        echo "changelog<<EOF" >> $GITHUB_OUTPUT
+        echo "$CHANGELOG" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+  # Build Release Artifacts
+  build-release:
+    name: Build Release Artifacts
+    runs-on: ubuntu-latest
+    needs: version
+    strategy:
+      matrix:
+        os: [linux, darwin, windows]
+        arch: [amd64, arm64]
+        exclude:
+          - os: windows
+            arch: arm64
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.25'
+
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+
+    - name: Build binary
+      run: |
+        VERSION=${{ needs.version.outputs.version }}
+        COMMIT_SHA=$(git rev-parse --short HEAD)
+        BUILD_TIME=$(date -u '+%Y-%m-%d %H:%M:%S')
+        
+        mkdir -p dist
+        
+        GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} go build \
+          -ldflags="-X 'main.Version=${VERSION}' -X 'main.GitCommit=${COMMIT_SHA}' -X 'main.BuildTime=${BUILD_TIME}'" \
+          -o dist/kvstore-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.os == 'windows' && '.exe' || '' }} \
+          ./cmd/kvstore
+
+    - name: Create archive
+      run: |
+        cd dist
+        if [ "${{ matrix.os }}" = "windows" ]; then
+          zip kvstore-${{ needs.version.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}.zip kvstore-${{ matrix.os }}-${{ matrix.arch }}.exe
+        else
+          tar -czf kvstore-${{ needs.version.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz kvstore-${{ matrix.os }}-${{ matrix.arch }}
+        fi
+
+    - name: Generate checksums
+      run: |
+        cd dist
+        sha256sum kvstore-${{ needs.version.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}.* > checksums-${{ matrix.os }}-${{ matrix.arch }}.txt
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: release-artifacts-${{ matrix.os }}-${{ matrix.arch }}
+        path: |
+          dist/kvstore-${{ needs.version.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}.*
+          dist/checksums-${{ matrix.os }}-${{ matrix.arch }}.txt
+
+  # Build and Push Container Images
+  build-images:
+    name: Build Release Images
+    runs-on: ubuntu-latest
+    needs: version
+    strategy:
+      matrix:
+        component: [kvstore, kvstore-proxy, kvstore-operator, kvstore-backup]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: |
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.component }}
+          ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.component }}
+        tags: |
+          type=semver,pattern={{version}},value=v${{ needs.version.outputs.version }}
+          type=semver,pattern={{major}}.{{minor}},value=v${{ needs.version.outputs.version }}
+          type=semver,pattern={{major}},value=v${{ needs.version.outputs.version }}
+          type=raw,value=latest
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./docker/Dockerfile.${{ matrix.component }}
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        build-args: |
+          VERSION=${{ needs.version.outputs.version }}
+          REVISION=${{ github.sha }}
+          BUILDTIME=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+
+    - name: Sign container images
+      run: |
+        # Install cosign
+        curl -O -L https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64
+        sudo mv cosign-linux-amd64 /usr/local/bin/cosign
+        sudo chmod +x /usr/local/bin/cosign
+        
+        # Sign images
+        echo "${{ secrets.COSIGN_PRIVATE_KEY }}" > cosign.key
+        for tag in $(echo "${{ steps.meta.outputs.tags }}" | tr ',' '\n'); do
+          cosign sign --key cosign.key $tag
+        done
+      env:
+        COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+
+  # Helm Chart Release
+  helm-release:
+    name: Release Helm Chart
+    runs-on: ubuntu-latest
+    needs: [version, build-images]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: '3.12.0'
+
+    - name: Update chart version
+      run: |
+        sed -i "s/^version:.*/version: ${{ needs.version.outputs.version }}/" charts/kvstore/Chart.yaml
+        sed -i "s/^appVersion:.*/appVersion: ${{ needs.version.outputs.version }}/" charts/kvstore/Chart.yaml
+
+    - name: Package Helm chart
+      run: |
+        helm package charts/kvstore --destination ./helm-releases
+
+    - name: Upload Helm chart
+      uses: actions/upload-artifact@v3
+      with:
+        name: helm-chart
+        path: helm-releases/*.tgz
+
+    - name: Publish to Helm repository
+      run: |
+        # Configure Helm repo
+        helm repo add kvstore-charts ${{ secrets.HELM_REPO_URL }}
+        helm repo update
+        
+        # Push chart
+        helm cm-push helm-releases/kvstore-${{ needs.version.outputs.version }}.tgz kvstore-charts
+      env:
+        HELM_REPO_USERNAME: ${{ secrets.HELM_REPO_USERNAME }}
+        HELM_REPO_PASSWORD: ${{ secrets.HELM_REPO_PASSWORD }}
+
+  # Create GitHub Release
+  github-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [version, build-release, build-images, helm-release]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+
+    - name: Prepare release assets
+      run: |
+        mkdir -p release-assets
+        
+        # Copy binary artifacts
+        find . -name "kvstore-*" -type f -exec cp {} release-assets/ \;
+        find . -name "checksums-*" -type f -exec cp {} release-assets/ \;
+        
+        # Copy Helm chart
+        find . -name "*.tgz" -type f -exec cp {} release-assets/ \;
+        
+        # Generate combined checksums
+        cd release-assets
+        sha256sum * > SHA256SUMS
+        
+        # Sign checksums
+        echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --import
+        gpg --detach-sign --armor SHA256SUMS
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ needs.version.outputs.version }}
+        name: Release v${{ needs.version.outputs.version }}
+        body: |
+          ## 🚀 Release v${{ needs.version.outputs.version }}
+          
+          ### What's Changed
+          ${{ needs.version.outputs.changelog }}
+          
+          ### 📦 Installation
+          
+          #### Binary Installation
+          ```bash
+          # Linux AMD64
+          curl -L https://github.com/${{ github.repository }}/releases/download/v${{ needs.version.outputs.version }}/kvstore-linux-amd64.tar.gz | tar -xz
+          
+          # macOS AMD64
+          curl -L https://github.com/${{ github.repository }}/releases/download/v${{ needs.version.outputs.version }}/kvstore-darwin-amd64.tar.gz | tar -xz
+          ```
+          
+          #### Container Images
+          ```bash
+          docker pull ghcr.io/${{ github.repository }}-kvstore:v${{ needs.version.outputs.version }}
+          ```
+          
+          #### Helm Chart
+          ```bash
+          helm repo add kvstore-charts ${{ secrets.HELM_REPO_URL }}
+          helm install kvstore kvstore-charts/kvstore --version ${{ needs.version.outputs.version }}
+          ```
+          
+          ### 🔒 Verification
+          All artifacts are signed and can be verified:
+          ```bash
+          # Verify checksums
+          sha256sum -c SHA256SUMS
+          
+          # Verify GPG signature
+          gpg --verify SHA256SUMS.asc SHA256SUMS
+          
+          # Verify container signatures with cosign
+          cosign verify ghcr.io/${{ github.repository }}-kvstore:v${{ needs.version.outputs.version }}
+          ```
+          
+          ### 📋 Full Changelog
+          **Full Changelog**: https://github.com/${{ github.repository }}/compare/v${{ needs.version.outputs.previous_version }}...v${{ needs.version.outputs.version }}
+        files: |
+          release-assets/*
+        draft: false
+        prerelease: ${{ contains(needs.version.outputs.version, '-') }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Update Documentation
+  update-docs:
+    name: Update Documentation
+    runs-on: ubuntu-latest
+    needs: [version, github-release]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Update version in documentation
+      run: |
+        # Update README.md
+        sed -i "s/version: [0-9]\+\.[0-9]\+\.[0-9]\+/version: ${{ needs.version.outputs.version }}/g" README.md
+        sed -i "s/:v[0-9]\+\.[0-9]\+\.[0-9]\+/:v${{ needs.version.outputs.version }}/g" README.md
+        
+        # Update documentation
+        find docs/ -name "*.md" -exec sed -i "s/version: [0-9]\+\.[0-9]\+\.[0-9]\+/version: ${{ needs.version.outputs.version }}/g" {} \;
+        find docs/ -name "*.md" -exec sed -i "s/:v[0-9]\+\.[0-9]\+\.[0-9]\+/:v${{ needs.version.outputs.version }}/g" {} \;
+
+    - name: Commit documentation updates
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add README.md docs/
+        git diff --staged --quiet || git commit -m "docs: update version to v${{ needs.version.outputs.version }} [skip ci]"
+        git push
+
+  # Notify Teams
+  notify:
+    name: Notify Release
+    runs-on: ubuntu-latest
+    needs: [version, github-release]
+    if: always()
+    
+    steps:
+    - name: Notify Slack
+      uses: 8398a7/action-slack@v3
+      with:
+        status: success
+        channel: '#releases'
+        message: |
+          🚀 New release published! 
+          
+          **Version**: v${{ needs.version.outputs.version }}
+          **Repository**: ${{ github.repository }}
+          **Release Notes**: https://github.com/${{ github.repository }}/releases/tag/v${{ needs.version.outputs.version }}
+          
+          ### Quick Start
+          ```bash
+          # Container
+          docker pull ghcr.io/${{ github.repository }}-kvstore:v${{ needs.version.outputs.version }}
+          
+          # Helm
+          helm install kvstore kvstore-charts/kvstore --version ${{ needs.version.outputs.version }}
+          ```
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+    - name: Update project management
+      uses: actions/github-script@v6
+      with:
+        script: |
+          // Create milestone for next release
+          const nextVersion = '${{ needs.version.outputs.version }}'.split('.')
+          nextVersion[2] = parseInt(nextVersion[2]) + 1
+          const nextVersionString = nextVersion.join('.')
+          
+          await github.rest.issues.createMilestone({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `v${nextVersionString}`,
+            description: `Release v${nextVersionString}`,
+          })
+
+    - name: Trigger downstream deployments
+      run: |
+        curl -X POST \
+          -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/${{ github.repository }}/dispatches \
+          -d '{"event_type":"new_release","client_payload":{"version":"${{ needs.version.outputs.version }}"}}'

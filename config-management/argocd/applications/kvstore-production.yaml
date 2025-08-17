@@ -1,0 +1,109 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kvstore-production
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: kvstore
+    environment: production
+    criticality: high
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    notifications.argoproj.io/subscribe.on-sync-succeeded.slack: kvstore-alerts
+    notifications.argoproj.io/subscribe.on-health-degraded.slack: kvstore-alerts
+    notifications.argoproj.io/subscribe.on-sync-failed.email: platform@example.com
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: kvstore
+  
+  source:
+    repoURL: https://github.com/example/distributed-kvstore
+    targetRevision: main
+    path: config-management/kustomize/overlays/production
+  
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kvstore
+  
+  syncPolicy:
+    # Manual sync for production - require approval
+    automated:
+      prune: false
+      selfHeal: false
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - ApplyOutOfSyncOnly=true
+      - RespectIgnoreDifferences=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 5m
+  
+  revisionHistoryLimit: 20
+  
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      managedFieldsManagers:
+        - kube-controller-manager
+    - group: ""
+      kind: Secret
+      name: kvstore-secrets
+      jsonPointers:
+        - /data
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+      jsonPointers:
+        - /spec/metrics
+  
+  info:
+    - name: Environment
+      value: Production
+    - name: Owner
+      value: Platform Team
+    - name: SLA
+      value: 99.9%
+    - name: Runbook
+      value: https://runbook.example.com/kvstore
+    - name: Monitoring
+      value: https://grafana.example.com/d/kvstore
+    - name: Alerts
+      value: https://alertmanager.example.com/#/alerts
+  
+  operation:
+    initiatedBy:
+      username: argocd
+    retry:
+      limit: 3
+    
+    # Pre-sync hooks for production validation
+    hooks:
+      - name: pre-sync-validation
+        kind: PreSync
+        manifest: |
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: kvstore-pre-sync-validation
+            generateName: kvstore-validation-
+          spec:
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                - name: validator
+                  image: ghcr.io/distributed-kvstore/validator:latest
+                  command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    echo "Running pre-sync validation..."
+                    # Add validation logic here
+                    kubectl get pods -n kvstore -l app.kubernetes.io/name=kvstore
+                    echo "Validation complete"
