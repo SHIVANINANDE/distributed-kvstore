@@ -1,0 +1,312 @@
+apiVersion: v1
+kind: StorageClass
+metadata:
+  name: fast-ssd
+  labels:
+    app: kvstore
+    component: storage
+provisioner: kubernetes.io/aws-ebs
+parameters:
+  type: gp3
+  iops: "3000"
+  throughput: "125"
+  fsType: ext4
+  encrypted: "true"
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+---
+apiVersion: v1
+kind: StorageClass
+metadata:
+  name: backup-storage
+  labels:
+    app: kvstore
+    component: backup
+provisioner: kubernetes.io/aws-ebs
+parameters:
+  type: sc1
+  fsType: ext4
+  encrypted: "true"
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kvstore-backup-pvc
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: backup
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: backup-storage
+  resources:
+    requests:
+      storage: 500Gi
+  volumeMode: Filesystem
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kvstore-logs-pvc
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: logging
+spec:
+  accessModes:
+  - ReadWriteMany
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 50Gi
+  volumeMode: Filesystem
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kvstore-config-pvc
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: config
+spec:
+  accessModes:
+  - ReadWriteMany
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 1Gi
+  volumeMode: Filesystem
+---
+# Snapshot Classes for Backup
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: kvstore-snapshot-class
+  labels:
+    app: kvstore
+    component: backup
+driver: ebs.csi.aws.com
+deletionPolicy: Retain
+parameters:
+  encrypted: "true"
+  tagSpecification_1: "Name=kvstore-snapshot"
+  tagSpecification_2: "Environment={{ .Values.environment }}"
+  tagSpecification_3: "Application=kvstore"
+---
+# Backup Storage Class for Long-term Retention
+apiVersion: v1
+kind: StorageClass
+metadata:
+  name: long-term-backup
+  labels:
+    app: kvstore
+    component: backup
+    tier: archive
+provisioner: kubernetes.io/aws-ebs
+parameters:
+  type: st1
+  fsType: ext4
+  encrypted: "true"
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+---
+# Monitoring Storage for Metrics and Logs
+apiVersion: v1
+kind: StorageClass
+metadata:
+  name: monitoring-storage
+  labels:
+    app: kvstore
+    component: monitoring
+provisioner: kubernetes.io/aws-ebs
+parameters:
+  type: gp3
+  iops: "2000"
+  throughput: "100"
+  fsType: ext4
+  encrypted: "true"
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+---
+# Cache Storage Class for High-Performance Temporary Data
+apiVersion: v1
+kind: StorageClass
+metadata:
+  name: cache-storage
+  labels:
+    app: kvstore
+    component: cache
+provisioner: kubernetes.io/aws-ebs
+parameters:
+  type: io2
+  iops: "5000"
+  fsType: ext4
+  encrypted: "true"
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+---
+# PVC Template for Dynamic Data Volumes
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kvstore-cache-pvc
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: cache
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: cache-storage
+  resources:
+    requests:
+      storage: 20Gi
+  volumeMode: Filesystem
+---
+# WAL (Write-Ahead Log) Storage Class
+apiVersion: v1
+kind: StorageClass
+metadata:
+  name: wal-storage
+  labels:
+    app: kvstore
+    component: wal
+provisioner: kubernetes.io/aws-ebs
+parameters:
+  type: io2
+  iops: "4000"
+  throughput: "1000"
+  fsType: ext4
+  encrypted: "true"
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: false
+reclaimPolicy: Retain
+---
+# Network Attached Storage for Shared Configurations
+apiVersion: v1
+kind: StorageClass
+metadata:
+  name: shared-config
+  labels:
+    app: kvstore
+    component: config
+provisioner: efs.csi.aws.com
+parameters:
+  provisioningMode: efs-ap
+  fileSystemId: fs-0123456789abcdef0  # Replace with actual EFS ID
+  directoryPerms: "0755"
+  uid: "1001"
+  gid: "1001"
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+---
+# Security Storage for Keys and Certificates
+apiVersion: v1
+kind: StorageClass
+metadata:
+  name: security-storage
+  labels:
+    app: kvstore
+    component: security
+provisioner: kubernetes.io/aws-ebs
+parameters:
+  type: gp3
+  iops: "1000"
+  fsType: ext4
+  encrypted: "true"
+  kmsKeyId: "arn:aws:kms:region:account:key/key-id"  # Replace with actual KMS key
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: false
+reclaimPolicy: Retain
+---
+# PVC for Security Data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kvstore-security-pvc
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: security
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: security-storage
+  resources:
+    requests:
+      storage: 5Gi
+  volumeMode: Filesystem
+---
+# Volume Snapshot for Backup Automation
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: kvstore-data-snapshot-template
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: backup
+    backup-type: automatic
+spec:
+  volumeSnapshotClassName: kvstore-snapshot-class
+  source:
+    persistentVolumeClaimName: data-kvstore-0  # This will be dynamically generated
+---
+# Local Storage Class for High-Performance Workloads
+apiVersion: v1
+kind: StorageClass
+metadata:
+  name: local-nvme
+  labels:
+    app: kvstore
+    component: performance
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: false
+reclaimPolicy: Delete
+---
+# PVC for Temporary High-Performance Storage
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kvstore-temp-pvc
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: temp
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: cache-storage
+  resources:
+    requests:
+      storage: 10Gi
+  volumeMode: Filesystem
+---
+# PVC for Monitoring Data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kvstore-monitoring-pvc
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: monitoring
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: monitoring-storage
+  resources:
+    requests:
+      storage: 100Gi
+  volumeMode: Filesystem

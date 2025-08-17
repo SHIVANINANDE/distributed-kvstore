@@ -1,0 +1,417 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kvstore
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: database
+    version: v1.0.0
+spec:
+  serviceName: kvstore-headless
+  replicas: 3
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: kvstore
+      component: database
+  template:
+    metadata:
+      labels:
+        app: kvstore
+        component: database
+        version: v1.0.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: kvstore
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      initContainers:
+      - name: init-config
+        image: busybox:1.35
+        command:
+        - sh
+        - -c
+        - |
+          echo "Initializing configuration..."
+          cp /config-template/* /config/
+          # Set node ID based on pod ordinal
+          NODE_ID=${HOSTNAME##*-}
+          sed -i "s/NODE_ID_PLACEHOLDER/$NODE_ID/g" /config/config.yaml
+          echo "Configuration initialized for node $NODE_ID"
+        volumeMounts:
+        - name: config-template
+          mountPath: /config-template
+        - name: config
+          mountPath: /config
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+      containers:
+      - name: kvstore
+        image: kvstore:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        - containerPort: 8081
+          name: grpc
+          protocol: TCP
+        - containerPort: 8082
+          name: raft
+          protocol: TCP
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        env:
+        - name: KVSTORE_NODE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: KVSTORE_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: KVSTORE_POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: KVSTORE_CONFIG_PATH
+          value: "/config/config.yaml"
+        - name: KVSTORE_DATA_DIR
+          value: "/data"
+        - name: KVSTORE_LOG_LEVEL
+          value: "INFO"
+        - name: KVSTORE_ENABLE_METRICS
+          value: "true"
+        - name: KVSTORE_CLUSTER_NAME
+          value: "kvstore-cluster"
+        - name: KVSTORE_TLS_ENABLED
+          value: "true"
+        - name: KVSTORE_TLS_CERT_PATH
+          value: "/certs/tls.crt"
+        - name: KVSTORE_TLS_KEY_PATH
+          value: "/certs/tls.key"
+        - name: KVSTORE_CA_CERT_PATH
+          value: "/certs/ca.crt"
+        - name: KVSTORE_AUTH_ENABLED
+          value: "true"
+        - name: KVSTORE_JWT_SECRET_PATH
+          value: "/secrets/jwt-secret"
+        - name: KVSTORE_ADMIN_PASSWORD_PATH
+          value: "/secrets/admin-password"
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+            ephemeral-storage: "2Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+            ephemeral-storage: "10Gi"
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: config
+          mountPath: /config
+        - name: tls-certs
+          mountPath: /certs
+          readOnly: true
+        - name: secrets
+          mountPath: /secrets
+          readOnly: true
+        - name: logs
+          mountPath: /logs
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTPS
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+            scheme: HTTPS
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+          successThreshold: 1
+        startupProbe:
+          httpGet:
+            path: /startup
+            port: http
+            scheme: HTTPS
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 30
+          successThreshold: 1
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - |
+                echo "Gracefully shutting down kvstore..."
+                # Send SIGTERM to allow graceful shutdown
+                pkill -TERM kvstore
+                # Wait for graceful shutdown
+                sleep 15
+      - name: exporter
+        image: kvstore-exporter:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 9091
+          name: exporter
+          protocol: TCP
+        env:
+        - name: KVSTORE_ENDPOINT
+          value: "https://localhost:8080"
+        - name: EXPORTER_PORT
+          value: "9091"
+        - name: EXPORTER_LOG_LEVEL
+          value: "INFO"
+        - name: EXPORTER_TLS_CERT_PATH
+          value: "/certs/tls.crt"
+        - name: EXPORTER_TLS_KEY_PATH
+          value: "/certs/tls.key"
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+        volumeMounts:
+        - name: tls-certs
+          mountPath: /certs
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: config-template
+        configMap:
+          name: kvstore-config
+          defaultMode: 0444
+      - name: config
+        emptyDir: {}
+      - name: tls-certs
+        secret:
+          secretName: kvstore-tls
+          defaultMode: 0400
+      - name: secrets
+        secret:
+          secretName: kvstore-secrets
+          defaultMode: 0400
+      - name: logs
+        emptyDir: {}
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - kvstore
+              topologyKey: kubernetes.io/hostname
+          - weight: 50
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - kvstore
+              topologyKey: topology.kubernetes.io/zone
+      tolerations:
+      - key: "node.kubernetes.io/memory-pressure"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "node.kubernetes.io/disk-pressure"
+        operator: "Exists"
+        effect: "NoSchedule"
+      nodeSelector:
+        kubernetes.io/arch: amd64
+        node-type: compute
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+      labels:
+        app: kvstore
+        component: storage
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      storageClassName: fast-ssd
+      resources:
+        requests:
+          storage: 100Gi
+      volumeMode: Filesystem
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kvstore-proxy
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: proxy
+    version: v1.0.0
+spec:
+  serviceName: kvstore-proxy-headless
+  replicas: 2
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: kvstore
+      component: proxy
+  template:
+    metadata:
+      labels:
+        app: kvstore
+        component: proxy
+        version: v1.0.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9092"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: kvstore-proxy
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1002
+        runAsGroup: 1002
+        fsGroup: 1002
+      containers:
+      - name: proxy
+        image: kvstore-proxy:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        - containerPort: 8081
+          name: grpc
+          protocol: TCP
+        - containerPort: 9092
+          name: metrics
+          protocol: TCP
+        env:
+        - name: PROXY_BACKEND_ENDPOINTS
+          value: "kvstore-0.kvstore-headless.kvstore.svc.cluster.local:8080,kvstore-1.kvstore-headless.kvstore.svc.cluster.local:8080,kvstore-2.kvstore-headless.kvstore.svc.cluster.local:8080"
+        - name: PROXY_LISTEN_ADDRESS
+          value: "0.0.0.0:8080"
+        - name: PROXY_GRPC_ADDRESS
+          value: "0.0.0.0:8081"
+        - name: PROXY_METRICS_ADDRESS
+          value: "0.0.0.0:9092"
+        - name: PROXY_LOG_LEVEL
+          value: "INFO"
+        - name: PROXY_HEALTH_CHECK_INTERVAL
+          value: "5s"
+        - name: PROXY_MAX_CONNECTIONS
+          value: "1000"
+        - name: PROXY_TLS_ENABLED
+          value: "true"
+        - name: PROXY_TLS_CERT_PATH
+          value: "/certs/tls.crt"
+        - name: PROXY_TLS_KEY_PATH
+          value: "/certs/tls.key"
+        - name: PROXY_CA_CERT_PATH
+          value: "/certs/ca.crt"
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+        volumeMounts:
+        - name: tls-certs
+          mountPath: /certs
+          readOnly: true
+        - name: proxy-config
+          mountPath: /config
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+            scheme: HTTPS
+          initialDelaySeconds: 20
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+            scheme: HTTPS
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: tls-certs
+        secret:
+          secretName: kvstore-tls
+          defaultMode: 0400
+      - name: proxy-config
+        configMap:
+          name: kvstore-proxy-config
+          defaultMode: 0444
+      terminationGracePeriodSeconds: 30
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: component
+                  operator: In
+                  values:
+                  - proxy
+              topologyKey: kubernetes.io/hostname

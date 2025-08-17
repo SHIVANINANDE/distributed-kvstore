@@ -1,0 +1,496 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kvstore-headless
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: database
+    service-type: headless
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+    protocol: TCP
+  - name: grpc
+    port: 8081
+    targetPort: grpc
+    protocol: TCP
+  - name: raft
+    port: 8082
+    targetPort: raft
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+    protocol: TCP
+  selector:
+    app: kvstore
+    component: database
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kvstore
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: database
+    service-type: cluster
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: "tcp"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-port: "8080"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval: "10"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-timeout: "6"
+    service.beta.kubernetes.io/aws-load-balancer-healthy-threshold: "2"
+    service.beta.kubernetes.io/aws-load-balancer-unhealthy-threshold: "2"
+spec:
+  type: ClusterIP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+    protocol: TCP
+  - name: grpc
+    port: 8081
+    targetPort: grpc
+    protocol: TCP
+  selector:
+    app: kvstore
+    component: database
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kvstore-proxy
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: proxy
+    service-type: loadbalancer
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: "tcp"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-port: "8080"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "arn:aws:acm:region:account:certificate/cert-id"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "https"
+    service.beta.kubernetes.io/aws-load-balancer-connection-draining-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-connection-draining-timeout: "60"
+spec:
+  type: LoadBalancer
+  loadBalancerSourceRanges:
+  - 10.0.0.0/8
+  - 172.16.0.0/12
+  - 192.168.0.0/16
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+    protocol: TCP
+  - name: https
+    port: 443
+    targetPort: http
+    protocol: TCP
+  - name: grpc
+    port: 8081
+    targetPort: grpc
+    protocol: TCP
+  selector:
+    app: kvstore
+    component: proxy
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kvstore-proxy-headless
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: proxy
+    service-type: headless
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+    protocol: TCP
+  - name: grpc
+    port: 8081
+    targetPort: grpc
+    protocol: TCP
+  - name: metrics
+    port: 9092
+    targetPort: metrics
+    protocol: TCP
+  selector:
+    app: kvstore
+    component: proxy
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kvstore-metrics
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: monitoring
+    service-type: metrics
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9090"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  ports:
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+    protocol: TCP
+  - name: exporter
+    port: 9091
+    targetPort: exporter
+    protocol: TCP
+  - name: proxy-metrics
+    port: 9092
+    targetPort: metrics
+    protocol: TCP
+  selector:
+    app: kvstore
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kvstore-admin
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: admin
+    service-type: internal
+spec:
+  type: ClusterIP
+  ports:
+  - name: admin-http
+    port: 8090
+    targetPort: admin
+    protocol: TCP
+  selector:
+    app: kvstore
+    component: database
+---
+# Internal service for inter-node Raft communication
+apiVersion: v1
+kind: Service
+metadata:
+  name: kvstore-raft
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: raft
+    service-type: internal
+spec:
+  type: ClusterIP
+  ports:
+  - name: raft
+    port: 8082
+    targetPort: raft
+    protocol: TCP
+  selector:
+    app: kvstore
+    component: database
+---
+# External service for client connections
+apiVersion: v1
+kind: Service
+metadata:
+  name: kvstore-external
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: external
+    service-type: external
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "arn:aws:acm:region:account:certificate/cert-id"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "https"
+    external-dns.alpha.kubernetes.io/hostname: "kvstore.example.com"
+    external-dns.alpha.kubernetes.io/ttl: "300"
+spec:
+  type: LoadBalancer
+  loadBalancerSourceRanges:
+  - 0.0.0.0/0  # Configure appropriately for production
+  ports:
+  - name: https
+    port: 443
+    targetPort: http
+    protocol: TCP
+  - name: grpc
+    port: 8081
+    targetPort: grpc
+    protocol: TCP
+  selector:
+    app: kvstore
+    component: proxy
+---
+# Service Monitor for Prometheus
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kvstore-monitor
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: kvstore
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+    scheme: https
+    tlsConfig:
+      insecureSkipVerify: true
+  - port: exporter
+    interval: 30s
+    path: /metrics
+    scheme: https
+    tlsConfig:
+      insecureSkipVerify: true
+  - port: proxy-metrics
+    interval: 30s
+    path: /metrics
+    scheme: https
+    tlsConfig:
+      insecureSkipVerify: true
+---
+# Pod Monitor for additional metrics
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: kvstore-pod-monitor
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: kvstore
+  podMetricsEndpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+    scheme: https
+    tlsConfig:
+      insecureSkipVerify: true
+---
+# Network Policy for Service Communication
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kvstore-network-policy
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: network
+spec:
+  podSelector:
+    matchLabels:
+      app: kvstore
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow traffic from within the same namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kvstore
+    ports:
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 8081
+    - protocol: TCP
+      port: 8082
+  # Allow traffic from monitoring namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090
+    - protocol: TCP
+      port: 9091
+    - protocol: TCP
+      port: 9092
+  # Allow traffic from ingress controllers
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow internal cluster communication
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kvstore
+    ports:
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 8081
+    - protocol: TCP
+      port: 8082
+  # Allow external API calls (for backup, monitoring, etc.)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+---
+# Ingress for External Access
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kvstore-ingress
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: ingress
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    nginx.ingress.kubernetes.io/upstream-vhost: "kvstore.example.com"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    nginx.ingress.kubernetes.io/connection-proxy-header: "keep-alive"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    external-dns.alpha.kubernetes.io/hostname: "kvstore.example.com"
+spec:
+  tls:
+  - hosts:
+    - kvstore.example.com
+    secretName: kvstore-tls-cert
+  rules:
+  - host: kvstore.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: kvstore-proxy
+            port:
+              number: 8080
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: kvstore-proxy
+            port:
+              number: 8080
+      - path: /metrics
+        pathType: Prefix
+        backend:
+          service:
+            name: kvstore-metrics
+            port:
+              number: 9090
+---
+# Service Account for External DNS
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: external-dns
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: dns
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/external-dns-role"
+---
+# Endpoint Slice for Service Discovery
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: kvstore-endpoints
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: discovery
+    kubernetes.io/service-name: kvstore
+addressType: IPv4
+ports:
+- name: http
+  port: 8080
+  protocol: TCP
+- name: grpc
+  port: 8081
+  protocol: TCP
+endpoints:
+- addresses:
+  - "10.0.1.10"  # Example IP - will be dynamically populated
+  conditions:
+    ready: true
+    serving: true
+    terminating: false
+  hostname: kvstore-0
+  nodeName: worker-node-1
+  zone: us-west-2a
+- addresses:
+  - "10.0.1.11"  # Example IP - will be dynamically populated
+  conditions:
+    ready: true
+    serving: true
+    terminating: false
+  hostname: kvstore-1
+  nodeName: worker-node-2
+  zone: us-west-2b
+- addresses:
+  - "10.0.1.12"  # Example IP - will be dynamically populated
+  conditions:
+    ready: true
+    serving: true
+    terminating: false
+  hostname: kvstore-2
+  nodeName: worker-node-3
+  zone: us-west-2c

@@ -1,0 +1,569 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kvstore
+  labels:
+    name: kvstore
+    app: kvstore
+    component: namespace
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kvstore
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: database
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/kvstore-service-role"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kvstore-proxy
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: proxy
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kvstore-operator
+  namespace: kvstore
+  labels:
+    app: kvstore-operator
+    component: operator
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/kvstore-operator-role"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kvstore-backup
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: backup
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/kvstore-backup-role"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kvstore-external-secrets
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: secrets
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/kvstore-external-secrets-role"
+---
+# Cluster roles
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kvstore-operator
+  labels:
+    app: kvstore-operator
+    component: operator
+rules:
+# Core API groups
+- apiGroups: [""]
+  resources: ["configmaps", "secrets", "services", "serviceaccounts", "persistentvolumeclaims", "pods", "events"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["pods/log", "pods/status"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch"]
+# Apps API group
+- apiGroups: ["apps"]
+  resources: ["statefulsets", "deployments", "replicasets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["statefulsets/status", "deployments/status"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+# Batch API group
+- apiGroups: ["batch"]
+  resources: ["jobs", "cronjobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Custom resources
+- apiGroups: ["kvstore.io"]
+  resources: ["kvstores", "kvstorebackups", "kvstorerestores"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["kvstore.io"]
+  resources: ["kvstores/status", "kvstorebackups/status", "kvstorerestores/status"]
+  verbs: ["get", "update", "patch"]
+- apiGroups: ["kvstore.io"]
+  resources: ["kvstores/finalizers", "kvstorebackups/finalizers", "kvstorerestores/finalizers"]
+  verbs: ["update"]
+# Monitoring
+- apiGroups: ["monitoring.coreos.com"]
+  resources: ["servicemonitors", "podmonitors", "prometheusrules"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Networking
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies", "ingresses"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Policy
+- apiGroups: ["policy"]
+  resources: ["poddisruptionbudgets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Autoscaling
+- apiGroups: ["autoscaling"]
+  resources: ["horizontalpodautoscalers"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Storage
+- apiGroups: ["storage.k8s.io"]
+  resources: ["storageclasses", "volumeattachments"]
+  verbs: ["get", "list", "watch"]
+# Snapshots
+- apiGroups: ["snapshot.storage.k8s.io"]
+  resources: ["volumesnapshots", "volumesnapshotcontents", "volumesnapshotclasses"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Certificates
+- apiGroups: ["cert-manager.io"]
+  resources: ["certificates", "certificaterequests", "issuers", "clusterissuers"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# External secrets
+- apiGroups: ["external-secrets.io"]
+  resources: ["externalsecrets", "secretstores", "clustersecretstores"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Sealed secrets
+- apiGroups: ["bitnami.com"]
+  resources: ["sealedsecrets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kvstore-reader
+  labels:
+    app: kvstore
+    component: database
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets", "services", "pods", "persistentvolumeclaims"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["statefulsets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["kvstore.io"]
+  resources: ["kvstores"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kvstore-backup-operator
+  labels:
+    app: kvstore
+    component: backup
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets", "pods", "persistentvolumeclaims"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["batch"]
+  resources: ["jobs", "cronjobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["kvstore.io"]
+  resources: ["kvstores", "kvstorebackups", "kvstorerestores"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["kvstore.io"]
+  resources: ["kvstorebackups/status", "kvstorerestores/status"]
+  verbs: ["get", "update", "patch"]
+- apiGroups: ["snapshot.storage.k8s.io"]
+  resources: ["volumesnapshots", "volumesnapshotcontents"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+# Cluster role bindings
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kvstore-operator
+  labels:
+    app: kvstore-operator
+    component: operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kvstore-operator
+subjects:
+- kind: ServiceAccount
+  name: kvstore-operator
+  namespace: kvstore
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kvstore-backup-operator
+  labels:
+    app: kvstore
+    component: backup
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kvstore-backup-operator
+subjects:
+- kind: ServiceAccount
+  name: kvstore-backup
+  namespace: kvstore
+---
+# Namespace-specific roles
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kvstore-database
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: database
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+- apiGroups: [""]
+  resources: ["persistentvolumeclaims"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["statefulsets"]
+  verbs: ["get", "list", "watch"]
+  resourceNames: ["kvstore"]
+- apiGroups: ["kvstore.io"]
+  resources: ["kvstores"]
+  verbs: ["get", "list", "watch"]
+  resourceNames: ["kvstore"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kvstore-proxy
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: proxy
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kvstore-backup
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: backup
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch", "create", "delete"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+- apiGroups: [""]
+  resources: ["persistentvolumeclaims"]
+  verbs: ["get", "list", "watch", "create"]
+- apiGroups: ["batch"]
+  resources: ["jobs", "cronjobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["kvstore.io"]
+  resources: ["kvstores", "kvstorebackups"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: ["snapshot.storage.k8s.io"]
+  resources: ["volumesnapshots"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kvstore-monitoring
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: monitoring
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+- apiGroups: ["apps"]
+  resources: ["statefulsets", "deployments"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["monitoring.coreos.com"]
+  resources: ["servicemonitors", "podmonitors"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+# Role bindings
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kvstore-database
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: database
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kvstore-database
+subjects:
+- kind: ServiceAccount
+  name: kvstore
+  namespace: kvstore
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kvstore-proxy
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: proxy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kvstore-proxy
+subjects:
+- kind: ServiceAccount
+  name: kvstore-proxy
+  namespace: kvstore
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kvstore-backup
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: backup
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kvstore-backup
+subjects:
+- kind: ServiceAccount
+  name: kvstore-backup
+  namespace: kvstore
+---
+# Pod Security Policy (if PSP is enabled)
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: kvstore-psp
+  labels:
+    app: kvstore
+    component: security
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  runAsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1001
+        max: 1001
+  seLinux:
+    rule: 'RunAsAny'
+  fsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1001
+        max: 1001
+  readOnlyRootFilesystem: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kvstore-psp-user
+  labels:
+    app: kvstore
+    component: security
+rules:
+- apiGroups: ['policy']
+  resources: ['podsecuritypolicies']
+  verbs: ['use']
+  resourceNames:
+  - kvstore-psp
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kvstore-psp-user
+  labels:
+    app: kvstore
+    component: security
+roleRef:
+  kind: ClusterRole
+  name: kvstore-psp-user
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: kvstore
+  namespace: kvstore
+- kind: ServiceAccount
+  name: kvstore-proxy
+  namespace: kvstore
+- kind: ServiceAccount
+  name: kvstore-backup
+  namespace: kvstore
+---
+# Pod Disruption Budget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: kvstore-pdb
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: database
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: kvstore
+      component: database
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: kvstore-proxy-pdb
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: proxy
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: kvstore
+      component: proxy
+---
+# Admission controller webhook configuration
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionWebhook
+metadata:
+  name: kvstore-validator
+  labels:
+    app: kvstore-operator
+    component: webhook
+webhooks:
+- name: kvstore.kvstore.io
+  clientConfig:
+    service:
+      name: kvstore-operator-webhook
+      namespace: kvstore
+      path: "/validate-kvstore-io-v1-kvstore"
+  rules:
+  - operations: ["CREATE", "UPDATE"]
+    apiGroups: ["kvstore.io"]
+    apiVersions: ["v1"]
+    resources: ["kvstores"]
+  admissionReviewVersions: ["v1", "v1beta1"]
+  sideEffects: None
+  failurePolicy: Fail
+- name: kvstorebackup.kvstore.io
+  clientConfig:
+    service:
+      name: kvstore-operator-webhook
+      namespace: kvstore
+      path: "/validate-kvstore-io-v1-kvstorebackup"
+  rules:
+  - operations: ["CREATE", "UPDATE"]
+    apiGroups: ["kvstore.io"]
+    apiVersions: ["v1"]
+    resources: ["kvstorebackups"]
+  admissionReviewVersions: ["v1", "v1beta1"]
+  sideEffects: None
+  failurePolicy: Fail
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionWebhook
+metadata:
+  name: kvstore-mutator
+  labels:
+    app: kvstore-operator
+    component: webhook
+webhooks:
+- name: kvstore.kvstore.io
+  clientConfig:
+    service:
+      name: kvstore-operator-webhook
+      namespace: kvstore
+      path: "/mutate-kvstore-io-v1-kvstore"
+  rules:
+  - operations: ["CREATE", "UPDATE"]
+    apiGroups: ["kvstore.io"]
+    apiVersions: ["v1"]
+    resources: ["kvstores"]
+  admissionReviewVersions: ["v1", "v1beta1"]
+  sideEffects: None
+  failurePolicy: Fail
+---
+# Priority Classes
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: kvstore-critical
+  labels:
+    app: kvstore
+    component: priority
+value: 1000000
+globalDefault: false
+description: "Priority class for critical KVStore components"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: kvstore-high
+  labels:
+    app: kvstore
+    component: priority
+value: 100000
+globalDefault: false
+description: "Priority class for high priority KVStore components"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: kvstore-normal
+  labels:
+    app: kvstore
+    component: priority
+value: 1000
+globalDefault: false
+description: "Priority class for normal KVStore components"

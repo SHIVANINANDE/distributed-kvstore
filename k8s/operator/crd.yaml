@@ -1,0 +1,784 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: kvstores.kvstore.io
+  labels:
+    app: kvstore-operator
+    component: crd
+spec:
+  group: kvstore.io
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              # Cluster Configuration
+              cluster:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    description: "Name of the KVStore cluster"
+                  replicas:
+                    type: integer
+                    minimum: 1
+                    maximum: 7
+                    default: 3
+                    description: "Number of KVStore replicas"
+                  version:
+                    type: string
+                    default: "latest"
+                    description: "KVStore version to deploy"
+                  image:
+                    type: string
+                    default: "kvstore:latest"
+                    description: "Container image for KVStore"
+                required:
+                - name
+                - replicas
+              
+              # Storage Configuration
+              storage:
+                type: object
+                properties:
+                  storageClass:
+                    type: string
+                    default: "fast-ssd"
+                    description: "Storage class for persistent volumes"
+                  size:
+                    type: string
+                    default: "100Gi"
+                    description: "Storage size per replica"
+                  backupStorage:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                        default: true
+                      storageClass:
+                        type: string
+                        default: "backup-storage"
+                      size:
+                        type: string
+                        default: "500Gi"
+                      retention:
+                        type: string
+                        default: "30d"
+                required:
+                - storageClass
+                - size
+              
+              # Resource Configuration
+              resources:
+                type: object
+                properties:
+                  requests:
+                    type: object
+                    properties:
+                      cpu:
+                        type: string
+                        default: "500m"
+                      memory:
+                        type: string
+                        default: "1Gi"
+                  limits:
+                    type: object
+                    properties:
+                      cpu:
+                        type: string
+                        default: "2"
+                      memory:
+                        type: string
+                        default: "4Gi"
+              
+              # Security Configuration
+              security:
+                type: object
+                properties:
+                  tls:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                        default: true
+                      secretName:
+                        type: string
+                        default: "kvstore-tls"
+                      issuerRef:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                          kind:
+                            type: string
+                            default: "ClusterIssuer"
+                  authentication:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                        default: true
+                      method:
+                        type: string
+                        enum: ["jwt", "basic", "oauth2"]
+                        default: "jwt"
+                      secretName:
+                        type: string
+                        default: "kvstore-secrets"
+                  rbac:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                        default: true
+                      defaultRole:
+                        type: string
+                        default: "user"
+              
+              # Monitoring Configuration
+              monitoring:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                    default: true
+                  prometheus:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                        default: true
+                      scrapeInterval:
+                        type: string
+                        default: "30s"
+                  grafana:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                        default: true
+                      dashboards:
+                        type: boolean
+                        default: true
+                  alerting:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                        default: true
+                      webhook:
+                        type: string
+              
+              # Backup Configuration
+              backup:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                    default: true
+                  schedule:
+                    type: string
+                    default: "0 2 * * *"
+                    description: "Cron schedule for automated backups"
+                  retention:
+                    type: object
+                    properties:
+                      daily:
+                        type: integer
+                        default: 7
+                      weekly:
+                        type: integer
+                        default: 4
+                      monthly:
+                        type: integer
+                        default: 12
+                  storage:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                        enum: ["s3", "gcs", "azure", "local"]
+                        default: "s3"
+                      s3:
+                        type: object
+                        properties:
+                          bucket:
+                            type: string
+                          region:
+                            type: string
+                          prefix:
+                            type: string
+                          encryption:
+                            type: string
+                            default: "AES256"
+              
+              # Scaling Configuration
+              scaling:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                    default: false
+                  minReplicas:
+                    type: integer
+                    minimum: 1
+                    default: 3
+                  maxReplicas:
+                    type: integer
+                    maximum: 7
+                    default: 5
+                  targetCPUUtilization:
+                    type: integer
+                    minimum: 1
+                    maximum: 100
+                    default: 70
+                  targetMemoryUtilization:
+                    type: integer
+                    minimum: 1
+                    maximum: 100
+                    default: 80
+              
+              # Network Configuration
+              network:
+                type: object
+                properties:
+                  service:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                        enum: ["ClusterIP", "LoadBalancer", "NodePort"]
+                        default: "ClusterIP"
+                      annotations:
+                        type: object
+                        additionalProperties:
+                          type: string
+                  ingress:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                        default: false
+                      className:
+                        type: string
+                        default: "nginx"
+                      hostname:
+                        type: string
+                      tls:
+                        type: boolean
+                        default: true
+                      annotations:
+                        type: object
+                        additionalProperties:
+                          type: string
+              
+              # Maintenance Configuration
+              maintenance:
+                type: object
+                properties:
+                  updateStrategy:
+                    type: string
+                    enum: ["RollingUpdate", "OnDelete"]
+                    default: "RollingUpdate"
+                  maxUnavailable:
+                    type: integer
+                    default: 1
+                  podDisruptionBudget:
+                    type: object
+                    properties:
+                      enabled:
+                        type: boolean
+                        default: true
+                      minAvailable:
+                        type: integer
+                        default: 2
+            required:
+            - cluster
+            - storage
+          
+          status:
+            type: object
+            properties:
+              # Cluster Status
+              phase:
+                type: string
+                enum: ["Pending", "Creating", "Running", "Scaling", "Updating", "Failed", "Terminating"]
+                description: "Current phase of the cluster"
+              conditions:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                      enum: ["True", "False", "Unknown"]
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+                    reason:
+                      type: string
+                    message:
+                      type: string
+              
+              # Replica Status
+              replicas:
+                type: object
+                properties:
+                  desired:
+                    type: integer
+                  ready:
+                    type: integer
+                  available:
+                    type: integer
+                  unavailable:
+                    type: integer
+              
+              # Resource Status
+              resources:
+                type: object
+                properties:
+                  cpu:
+                    type: object
+                    properties:
+                      requested:
+                        type: string
+                      used:
+                        type: string
+                      utilization:
+                        type: string
+                  memory:
+                    type: object
+                    properties:
+                      requested:
+                        type: string
+                      used:
+                        type: string
+                      utilization:
+                        type: string
+                  storage:
+                    type: object
+                    properties:
+                      total:
+                        type: string
+                      used:
+                        type: string
+                      utilization:
+                        type: string
+              
+              # Service Status
+              services:
+                type: object
+                properties:
+                  clusterIP:
+                    type: string
+                  loadBalancerIP:
+                    type: string
+                  endpoints:
+                    type: array
+                    items:
+                      type: string
+              
+              # Backup Status
+              backup:
+                type: object
+                properties:
+                  lastBackup:
+                    type: string
+                    format: date-time
+                  nextBackup:
+                    type: string
+                    format: date-time
+                  status:
+                    type: string
+                    enum: ["Success", "Failed", "InProgress"]
+                  size:
+                    type: string
+              
+              # Health Status
+              health:
+                type: object
+                properties:
+                  overall:
+                    type: string
+                    enum: ["Healthy", "Warning", "Critical", "Unknown"]
+                  raft:
+                    type: object
+                    properties:
+                      leader:
+                        type: string
+                      term:
+                        type: integer
+                      status:
+                        type: string
+                  nodes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        ready:
+                          type: boolean
+                        role:
+                          type: string
+                        lastHeartbeat:
+                          type: string
+                          format: date-time
+              
+              # Events
+              events:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    timestamp:
+                      type: string
+                      format: date-time
+                    type:
+                      type: string
+                    reason:
+                      type: string
+                    message:
+                      type: string
+                    source:
+                      type: string
+              
+              # Observability
+              observedGeneration:
+                type: integer
+                description: "The generation observed by the controller"
+              lastUpdated:
+                type: string
+                format: date-time
+                description: "Last time the status was updated"
+    
+    additionalPrinterColumns:
+    - name: Phase
+      type: string
+      description: "Current phase of the cluster"
+      jsonPath: .status.phase
+    - name: Replicas
+      type: string
+      description: "Ready/Desired replicas"
+      jsonPath: .status.replicas.ready/.status.replicas.desired
+    - name: Health
+      type: string
+      description: "Overall health status"
+      jsonPath: .status.health.overall
+    - name: Version
+      type: string
+      description: "KVStore version"
+      jsonPath: .spec.cluster.version
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    
+    subresources:
+      status: {}
+      scale:
+        specReplicasPath: .spec.cluster.replicas
+        statusReplicasPath: .status.replicas.ready
+        labelSelectorPath: .status.selector
+  
+  scope: Namespaced
+  names:
+    plural: kvstores
+    singular: kvstore
+    kind: KVStore
+    shortNames:
+    - kvs
+    categories:
+    - database
+    - storage
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: kvstorebackups.kvstore.io
+  labels:
+    app: kvstore-operator
+    component: crd
+spec:
+  group: kvstore.io
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              # Source Configuration
+              source:
+                type: object
+                properties:
+                  kvstoreName:
+                    type: string
+                    description: "Name of the KVStore cluster to backup"
+                  namespace:
+                    type: string
+                    description: "Namespace of the KVStore cluster"
+                required:
+                - kvstoreName
+              
+              # Backup Configuration
+              backup:
+                type: object
+                properties:
+                  type:
+                    type: string
+                    enum: ["full", "incremental", "snapshot"]
+                    default: "full"
+                  compression:
+                    type: boolean
+                    default: true
+                  encryption:
+                    type: boolean
+                    default: true
+                  retention:
+                    type: string
+                    default: "30d"
+                  schedule:
+                    type: string
+                    description: "Cron schedule for automated backups"
+              
+              # Storage Configuration
+              storage:
+                type: object
+                properties:
+                  type:
+                    type: string
+                    enum: ["s3", "gcs", "azure", "local", "pvc"]
+                    default: "s3"
+                  s3:
+                    type: object
+                    properties:
+                      bucket:
+                        type: string
+                      region:
+                        type: string
+                      prefix:
+                        type: string
+                      storageClass:
+                        type: string
+                        default: "STANDARD_IA"
+                      encryption:
+                        type: string
+                        default: "AES256"
+                  pvc:
+                    type: object
+                    properties:
+                      storageClass:
+                        type: string
+                      size:
+                        type: string
+                        default: "100Gi"
+            required:
+            - source
+            - storage
+          
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+                enum: ["Pending", "Running", "Completed", "Failed"]
+              startTime:
+                type: string
+                format: date-time
+              completionTime:
+                type: string
+                format: date-time
+              backupSize:
+                type: string
+              location:
+                type: string
+              conditions:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+                    reason:
+                      type: string
+                    message:
+                      type: string
+    
+    additionalPrinterColumns:
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: Type
+      type: string
+      jsonPath: .spec.backup.type
+    - name: Size
+      type: string
+      jsonPath: .status.backupSize
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    
+    subresources:
+      status: {}
+  
+  scope: Namespaced
+  names:
+    plural: kvstorebackups
+    singular: kvstorebackup
+    kind: KVStoreBackup
+    shortNames:
+    - kvsbackup
+    - kvsbak
+    categories:
+    - backup
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: kvstorerestores.kvstore.io
+  labels:
+    app: kvstore-operator
+    component: crd
+spec:
+  group: kvstore.io
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              # Target Configuration
+              target:
+                type: object
+                properties:
+                  kvstoreName:
+                    type: string
+                    description: "Name of the KVStore cluster to restore to"
+                  namespace:
+                    type: string
+                    description: "Namespace of the target KVStore cluster"
+                  createIfNotExists:
+                    type: boolean
+                    default: false
+                required:
+                - kvstoreName
+              
+              # Source Configuration
+              source:
+                type: object
+                properties:
+                  backupName:
+                    type: string
+                    description: "Name of the backup to restore from"
+                  location:
+                    type: string
+                    description: "Backup location (S3 path, etc.)"
+                  pointInTime:
+                    type: string
+                    format: date-time
+                    description: "Point-in-time to restore to"
+                required:
+                - backupName
+              
+              # Restore Configuration
+              restore:
+                type: object
+                properties:
+                  strategy:
+                    type: string
+                    enum: ["replace", "merge"]
+                    default: "replace"
+                  verification:
+                    type: boolean
+                    default: true
+                  parallelism:
+                    type: integer
+                    default: 1
+                    minimum: 1
+                    maximum: 10
+            required:
+            - target
+            - source
+          
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+                enum: ["Pending", "Running", "Completed", "Failed", "Verifying"]
+              startTime:
+                type: string
+                format: date-time
+              completionTime:
+                type: string
+                format: date-time
+              progress:
+                type: string
+              conditions:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+                    reason:
+                      type: string
+                    message:
+                      type: string
+    
+    additionalPrinterColumns:
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+    - name: Target
+      type: string
+      jsonPath: .spec.target.kvstoreName
+    - name: Source
+      type: string
+      jsonPath: .spec.source.backupName
+    - name: Progress
+      type: string
+      jsonPath: .status.progress
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+    
+    subresources:
+      status: {}
+  
+  scope: Namespaced
+  names:
+    plural: kvstorerestores
+    singular: kvstorerestore
+    kind: KVStoreRestore
+    shortNames:
+    - kvsrestore
+    categories:
+    - restore

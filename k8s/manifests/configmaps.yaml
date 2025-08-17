@@ -1,0 +1,642 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kvstore-config
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: config
+data:
+  config.yaml: |
+    # KVStore Configuration
+    server:
+      node_id: NODE_ID_PLACEHOLDER
+      cluster_name: "kvstore-cluster"
+      listen_address: "0.0.0.0:8080"
+      grpc_address: "0.0.0.0:8081"
+      raft_address: "0.0.0.0:8082"
+      admin_address: "0.0.0.0:8090"
+      metrics_address: "0.0.0.0:9090"
+      
+      # TLS Configuration
+      tls:
+        enabled: true
+        cert_file: "/certs/tls.crt"
+        key_file: "/certs/tls.key"
+        ca_file: "/certs/ca.crt"
+        min_version: "1.2"
+        max_version: "1.3"
+        cipher_suites:
+          - "TLS_AES_256_GCM_SHA384"
+          - "TLS_CHACHA20_POLY1305_SHA256"
+          - "TLS_AES_128_GCM_SHA256"
+        
+      # HTTP Configuration
+      http:
+        read_timeout: "30s"
+        write_timeout: "30s"
+        idle_timeout: "120s"
+        read_header_timeout: "10s"
+        max_header_bytes: 1048576
+        
+      # GRPC Configuration
+      grpc:
+        max_recv_msg_size: 4194304
+        max_send_msg_size: 4194304
+        connection_timeout: "10s"
+        keepalive:
+          time: "30s"
+          timeout: "5s"
+          
+    # Raft Configuration
+    raft:
+      node_id: NODE_ID_PLACEHOLDER
+      data_dir: "/data/raft"
+      bind_addr: "0.0.0.0:8082"
+      snapshot_interval: "120s"
+      snapshot_threshold: 8192
+      trailing_logs: 10240
+      heartbeat_timeout: "1s"
+      election_timeout: "1s"
+      commit_timeout: "50ms"
+      max_append_entries: 64
+      
+      # Cluster Members
+      peers:
+        - id: "0"
+          address: "kvstore-0.kvstore-headless.kvstore.svc.cluster.local:8082"
+        - id: "1"
+          address: "kvstore-1.kvstore-headless.kvstore.svc.cluster.local:8082"
+        - id: "2"
+          address: "kvstore-2.kvstore-headless.kvstore.svc.cluster.local:8082"
+          
+    # Storage Configuration
+    storage:
+      engine: "badger"
+      data_dir: "/data/storage"
+      backup_dir: "/data/backup"
+      
+      # Badger Configuration
+      badger:
+        value_log_file_size: 1073741824  # 1GB
+        sync_writes: true
+        num_versions_to_keep: 1
+        compact_l0_on_close: true
+        
+      # Cache Configuration
+      cache:
+        enabled: true
+        size: "512MB"
+        ttl: "1h"
+        
+      # Compression
+      compression:
+        enabled: true
+        algorithm: "snappy"
+        level: 1
+        
+    # Authentication Configuration
+    auth:
+      enabled: true
+      jwt:
+        secret_file: "/secrets/jwt-secret"
+        token_ttl: "15m"
+        refresh_token_ttl: "168h"
+        issuer: "kvstore-cluster"
+        algorithm: "RS256"
+        
+      # Rate Limiting
+      rate_limit:
+        enabled: true
+        requests_per_minute: 1000
+        burst_size: 100
+        
+      # RBAC
+      rbac:
+        enabled: true
+        default_role: "user"
+        admin_role: "admin"
+        
+    # Monitoring Configuration
+    monitoring:
+      enabled: true
+      metrics:
+        enabled: true
+        address: "0.0.0.0:9090"
+        path: "/metrics"
+        
+      # Health Checks
+      health:
+        enabled: true
+        interval: "10s"
+        timeout: "5s"
+        
+      # Logging
+      logging:
+        level: "INFO"
+        format: "json"
+        output: "stdout"
+        file: "/logs/kvstore.log"
+        max_size: "100MB"
+        max_backups: 10
+        max_age: 30
+        compress: true
+        
+    # Backup Configuration
+    backup:
+      enabled: true
+      interval: "6h"
+      retention: "168h"  # 7 days
+      storage_path: "/data/backup"
+      compression: true
+      encryption: true
+      
+      # S3 Configuration
+      s3:
+        enabled: true
+        bucket: "kvstore-backups"
+        region: "us-west-2"
+        prefix: "backups/"
+        encryption: "AES256"
+        
+    # Replication Configuration
+    replication:
+      enabled: true
+      factor: 3
+      strategy: "raft"
+      sync_timeout: "5s"
+      
+    # Performance Tuning
+    performance:
+      max_connections: 1000
+      worker_threads: 4
+      io_threads: 2
+      batch_size: 100
+      flush_interval: "1s"
+      
+      # Memory Limits
+      memory:
+        max_heap_size: "2GB"
+        cache_size: "512MB"
+        buffer_size: "64MB"
+        
+      # Disk I/O
+      disk:
+        sync_interval: "5s"
+        batch_writes: true
+        pre_allocate: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kvstore-proxy-config
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: proxy
+data:
+  proxy.yaml: |
+    # Proxy Configuration
+    proxy:
+      listen_address: "0.0.0.0:8080"
+      grpc_address: "0.0.0.0:8081"
+      metrics_address: "0.0.0.0:9092"
+      
+      # Backend Configuration
+      backends:
+        - address: "kvstore-0.kvstore-headless.kvstore.svc.cluster.local:8080"
+          weight: 1
+          max_connections: 100
+        - address: "kvstore-1.kvstore-headless.kvstore.svc.cluster.local:8080"
+          weight: 1
+          max_connections: 100
+        - address: "kvstore-2.kvstore-headless.kvstore.svc.cluster.local:8080"
+          weight: 1
+          max_connections: 100
+          
+      # Load Balancing
+      load_balancing:
+        strategy: "round_robin"  # round_robin, least_connections, ip_hash
+        health_check:
+          enabled: true
+          interval: "5s"
+          timeout: "3s"
+          path: "/health"
+          
+      # Connection Pooling
+      connection_pool:
+        max_idle_connections: 50
+        max_connections_per_host: 100
+        idle_connection_timeout: "90s"
+        
+      # TLS Configuration
+      tls:
+        enabled: true
+        cert_file: "/certs/tls.crt"
+        key_file: "/certs/tls.key"
+        ca_file: "/certs/ca.crt"
+        
+      # Rate Limiting
+      rate_limit:
+        enabled: true
+        requests_per_second: 1000
+        burst_size: 100
+        
+      # Circuit Breaker
+      circuit_breaker:
+        enabled: true
+        failure_threshold: 5
+        recovery_timeout: "30s"
+        timeout: "10s"
+        
+      # Timeouts
+      timeouts:
+        connect: "5s"
+        request: "30s"
+        response: "30s"
+        idle: "60s"
+        
+      # Monitoring
+      monitoring:
+        enabled: true
+        metrics_interval: "10s"
+        
+      # Logging
+      logging:
+        level: "INFO"
+        format: "json"
+        access_log: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kvstore-monitoring-config
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      
+    rule_files:
+      - "/etc/prometheus/rules/*.yml"
+      
+    scrape_configs:
+    - job_name: 'kvstore'
+      static_configs:
+      - targets:
+        - 'kvstore-0.kvstore-headless.kvstore.svc.cluster.local:9090'
+        - 'kvstore-1.kvstore-headless.kvstore.svc.cluster.local:9090'
+        - 'kvstore-2.kvstore-headless.kvstore.svc.cluster.local:9090'
+      metrics_path: '/metrics'
+      scrape_interval: 30s
+      
+    - job_name: 'kvstore-proxy'
+      static_configs:
+      - targets:
+        - 'kvstore-proxy-0.kvstore-proxy-headless.kvstore.svc.cluster.local:9092'
+        - 'kvstore-proxy-1.kvstore-proxy-headless.kvstore.svc.cluster.local:9092'
+      metrics_path: '/metrics'
+      scrape_interval: 30s
+      
+  alerting.yml: |
+    groups:
+    - name: kvstore
+      rules:
+      - alert: KVStoreDown
+        expr: up{job="kvstore"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "KVStore instance is down"
+          description: "KVStore instance {{ $labels.instance }} has been down for more than 1 minute."
+          
+      - alert: KVStoreHighLatency
+        expr: kvstore_request_duration_seconds{quantile="0.95"} > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "KVStore high latency"
+          description: "95th percentile latency is above 1s for {{ $labels.instance }}"
+          
+      - alert: KVStoreHighErrorRate
+        expr: rate(kvstore_requests_total{status!="200"}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "KVStore high error rate"
+          description: "Error rate is above 10% for {{ $labels.instance }}"
+          
+      - alert: KVStoreLowDiskSpace
+        expr: kvstore_disk_usage_percent > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "KVStore low disk space"
+          description: "Disk usage is above 85% for {{ $labels.instance }}"
+          
+      - alert: KVStoreRaftLeaderLost
+        expr: kvstore_raft_leader == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "KVStore Raft leader lost"
+          description: "Raft cluster has no leader"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kvstore-backup-config
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: backup
+data:
+  backup.yaml: |
+    # Backup Configuration
+    backup:
+      enabled: true
+      schedule: "0 */6 * * *"  # Every 6 hours
+      retention:
+        daily: 7
+        weekly: 4
+        monthly: 12
+        yearly: 5
+        
+      # Storage Configuration
+      storage:
+        type: "s3"
+        s3:
+          bucket: "kvstore-backups"
+          region: "us-west-2"
+          prefix: "cluster-backups/"
+          encryption: "AES256"
+          storage_class: "STANDARD_IA"
+          
+      # Compression
+      compression:
+        enabled: true
+        algorithm: "gzip"
+        level: 6
+        
+      # Encryption
+      encryption:
+        enabled: true
+        algorithm: "AES-256-GCM"
+        key_file: "/secrets/backup-key"
+        
+      # Verification
+      verification:
+        enabled: true
+        checksum: "sha256"
+        
+      # Notifications
+      notifications:
+        enabled: true
+        webhook_url: "https://hooks.slack.com/services/..."
+        email:
+          enabled: true
+          smtp_host: "smtp.example.com"
+          smtp_port: 587
+          recipients:
+            - "admin@example.com"
+            
+  restore.yaml: |
+    # Restore Configuration
+    restore:
+      # Source Configuration
+      source:
+        type: "s3"
+        s3:
+          bucket: "kvstore-backups"
+          region: "us-west-2"
+          prefix: "cluster-backups/"
+          
+      # Verification
+      verification:
+        enabled: true
+        checksum_validation: true
+        
+      # Recovery Options
+      recovery:
+        parallel_streams: 4
+        chunk_size: "64MB"
+        timeout: "1h"
+        
+      # Post-restore Actions
+      post_restore:
+        restart_cluster: true
+        verify_data: true
+        run_consistency_check: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kvstore-scripts
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: scripts
+data:
+  init.sh: |
+    #!/bin/bash
+    set -e
+    
+    echo "Initializing KVStore node..."
+    
+    # Wait for network to be ready
+    until nslookup kvstore-headless.kvstore.svc.cluster.local; do
+      echo "Waiting for DNS resolution..."
+      sleep 2
+    done
+    
+    # Create necessary directories
+    mkdir -p /data/raft /data/storage /data/backup /logs
+    
+    # Set proper permissions
+    chown -R 1001:1001 /data /logs
+    
+    # Initialize Raft cluster if this is the first node
+    if [ "${HOSTNAME}" = "kvstore-0" ]; then
+      echo "Initializing Raft cluster..."
+      /usr/local/bin/kvstore --config=/config/config.yaml --init-cluster
+    else
+      echo "Joining existing Raft cluster..."
+      # Wait for leader to be elected
+      sleep 10
+    fi
+    
+    echo "Initialization complete"
+    
+  health-check.sh: |
+    #!/bin/bash
+    
+    # Health check script
+    ENDPOINT="${1:-https://localhost:8080/health}"
+    
+    # Check if the service is responding
+    if curl -k -f -s "$ENDPOINT" > /dev/null; then
+      echo "Health check passed"
+      exit 0
+    else
+      echo "Health check failed"
+      exit 1
+    fi
+    
+  backup.sh: |
+    #!/bin/bash
+    set -e
+    
+    echo "Starting backup process..."
+    
+    BACKUP_DIR="/data/backup"
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    BACKUP_NAME="kvstore_backup_${TIMESTAMP}"
+    
+    # Create backup directory
+    mkdir -p "${BACKUP_DIR}/${BACKUP_NAME}"
+    
+    # Backup data
+    echo "Backing up data..."
+    cp -r /data/storage "${BACKUP_DIR}/${BACKUP_NAME}/"
+    cp -r /data/raft "${BACKUP_DIR}/${BACKUP_NAME}/"
+    
+    # Create metadata file
+    cat > "${BACKUP_DIR}/${BACKUP_NAME}/metadata.json" << EOF
+    {
+      "timestamp": "${TIMESTAMP}",
+      "node_id": "${KVSTORE_NODE_ID}",
+      "cluster_name": "${KVSTORE_CLUSTER_NAME}",
+      "version": "1.0.0"
+    }
+    EOF
+    
+    # Compress backup
+    echo "Compressing backup..."
+    tar -czf "${BACKUP_DIR}/${BACKUP_NAME}.tar.gz" -C "${BACKUP_DIR}" "${BACKUP_NAME}"
+    rm -rf "${BACKUP_DIR}/${BACKUP_NAME}"
+    
+    # Upload to S3 if configured
+    if [ "${BACKUP_S3_ENABLED}" = "true" ]; then
+      echo "Uploading backup to S3..."
+      aws s3 cp "${BACKUP_DIR}/${BACKUP_NAME}.tar.gz" "s3://${BACKUP_S3_BUCKET}/${BACKUP_S3_PREFIX}${BACKUP_NAME}.tar.gz"
+    fi
+    
+    echo "Backup completed: ${BACKUP_NAME}.tar.gz"
+    
+  restore.sh: |
+    #!/bin/bash
+    set -e
+    
+    BACKUP_FILE="$1"
+    
+    if [ -z "$BACKUP_FILE" ]; then
+      echo "Usage: $0 <backup_file>"
+      exit 1
+    fi
+    
+    echo "Starting restore process from ${BACKUP_FILE}..."
+    
+    # Stop the service
+    echo "Stopping KVStore service..."
+    pkill -TERM kvstore || true
+    sleep 5
+    
+    # Backup current data
+    echo "Backing up current data..."
+    mv /data/storage /data/storage.bak.$(date +%Y%m%d_%H%M%S) || true
+    mv /data/raft /data/raft.bak.$(date +%Y%m%d_%H%M%S) || true
+    
+    # Extract backup
+    echo "Extracting backup..."
+    mkdir -p /tmp/restore
+    tar -xzf "$BACKUP_FILE" -C /tmp/restore
+    
+    # Restore data
+    echo "Restoring data..."
+    BACKUP_NAME=$(basename "$BACKUP_FILE" .tar.gz)
+    cp -r /tmp/restore/${BACKUP_NAME}/storage /data/
+    cp -r /tmp/restore/${BACKUP_NAME}/raft /data/
+    
+    # Set proper permissions
+    chown -R 1001:1001 /data
+    
+    # Cleanup
+    rm -rf /tmp/restore
+    
+    echo "Restore completed. Please restart the service."
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kvstore-grafana-dashboard
+  namespace: kvstore
+  labels:
+    app: kvstore
+    component: monitoring
+    grafana_dashboard: "1"
+data:
+  kvstore-dashboard.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "KVStore Cluster Dashboard",
+        "tags": ["kvstore", "distributed", "database"],
+        "timezone": "browser",
+        "panels": [
+          {
+            "title": "Cluster Overview",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "up{job=\"kvstore\"}",
+                "legendFormat": "Nodes Online"
+              }
+            ]
+          },
+          {
+            "title": "Request Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(kvstore_requests_total[5m])",
+                "legendFormat": "{{instance}}"
+              }
+            ]
+          },
+          {
+            "title": "Response Time",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "kvstore_request_duration_seconds{quantile=\"0.95\"}",
+                "legendFormat": "95th percentile"
+              }
+            ]
+          },
+          {
+            "title": "Error Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(kvstore_requests_total{status!=\"200\"}[5m])",
+                "legendFormat": "Error Rate"
+              }
+            ]
+          }
+        ],
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "refresh": "5s"
+      }
+    }
