@@ -1,0 +1,191 @@
+{{ define "__subject" }}
+[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .GroupLabels.SortedPairs.Values | join " " }} {{ if gt (len .CommonLabels) (len .GroupLabels) }}({{ with .CommonLabels.Remove .GroupLabels.Names }}{{ .Values | join " " }}{{ end }}){{ end }}
+{{ end }}
+
+{{ define "__description" }}
+{{ if ne .CommonAnnotations.description "" }}{{ .CommonAnnotations.description }}{{ end }}
+{{ if ne .CommonAnnotations.summary "" }}{{ .CommonAnnotations.summary }}{{ end }}
+{{ end }}
+
+{{ define "__text_alert_list" }}{{ range . }}
+---
+**Alert:** {{ .Annotations.summary }}{{ if .Labels.severity }} *[{{ .Labels.severity | toUpper }}]*{{ end }}
+
+**Description:** {{ .Annotations.description }}
+
+**Details:**
+{{ range .Labels.SortedPairs }}• **{{ .Name }}:** {{ .Value }}
+{{ end }}
+**Firing since:** {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}{{ if ne .Annotations.runbook_url "" }}
+
+**Runbook:** {{ .Annotations.runbook_url }}{{ end }}{{ if ne .Annotations.dashboard_url "" }}
+
+**Dashboard:** {{ .Annotations.dashboard_url }}{{ end }}{{ end }}{{ end }}
+
+{{ define "slack.kvstore.title" }}
+{{ if eq .Status "firing" }}🔥 {{ .Alerts.Firing | len }} KVStore Alert(s) Firing{{ else }}✅ {{ .Alerts.Resolved | len }} KVStore Alert(s) Resolved{{ end }}
+{{ end }}
+
+{{ define "slack.kvstore.text" }}
+{{ if eq .Status "firing" }}
+**Cluster:** {{ .CommonLabels.cluster | default "unknown" }}
+**Environment:** {{ .CommonLabels.environment | default "unknown" }}
+
+{{ template "__text_alert_list" .Alerts.Firing }}
+{{ else }}
+**Resolved Alerts:**
+{{ template "__text_alert_list" .Alerts.Resolved }}
+{{ end }}
+{{ end }}
+
+{{ define "slack.kvstore.color" }}
+{{ if eq .Status "firing" }}
+{{ if eq .CommonLabels.severity "critical" }}danger{{ else if eq .CommonLabels.severity "warning" }}warning{{ else }}#36C5F0{{ end }}
+{{ else }}good{{ end }}
+{{ end }}
+
+{{ define "email.kvstore.subject" }}
+{{ template "__subject" . }}
+{{ end }}
+
+{{ define "email.kvstore.html" }}
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+body { font-family: Arial, sans-serif; }
+.header { background-color: #f8f9fa; padding: 20px; border-radius: 5px; }
+.alert { margin: 10px 0; padding: 15px; border-radius: 5px; }
+.critical { background-color: #f8d7da; border: 1px solid #f5c6cb; }
+.warning { background-color: #fff3cd; border: 1px solid #ffeaa7; }
+.info { background-color: #d4edda; border: 1px solid #c3e6cb; }
+.resolved { background-color: #d1ecf1; border: 1px solid #bee5eb; }
+.details { margin-top: 10px; font-size: 0.9em; color: #666; }
+.label { display: inline-block; background-color: #e9ecef; padding: 2px 6px; margin: 2px; border-radius: 3px; font-size: 0.8em; }
+</style>
+</head>
+<body>
+
+<div class="header">
+<h2>KVStore Monitoring Alert</h2>
+<p><strong>Status:</strong> {{ .Status | title }}</p>
+<p><strong>Cluster:</strong> {{ .CommonLabels.cluster | default "unknown" }}</p>
+<p><strong>Environment:</strong> {{ .CommonLabels.environment | default "unknown" }}</p>
+<p><strong>Triggered:</strong> {{ .Alerts.Firing | len }} alert(s) firing, {{ .Alerts.Resolved | len }} alert(s) resolved</p>
+</div>
+
+{{ if gt (len .Alerts.Firing) 0 }}
+<h3>🔥 Firing Alerts</h3>
+{{ range .Alerts.Firing }}
+<div class="alert {{ if eq .Labels.severity "critical" }}critical{{ else if eq .Labels.severity "warning" }}warning{{ else }}info{{ end }}">
+<h4>{{ .Annotations.summary }}</h4>
+<p><strong>Description:</strong> {{ .Annotations.description }}</p>
+<p><strong>Severity:</strong> {{ .Labels.severity | default "unknown" | title }}</p>
+<p><strong>Started:</strong> {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}</p>
+
+{{ if .Annotations.runbook_url }}
+<p><strong>Runbook:</strong> <a href="{{ .Annotations.runbook_url }}">{{ .Annotations.runbook_url }}</a></p>
+{{ end }}
+
+{{ if .Annotations.dashboard_url }}
+<p><strong>Dashboard:</strong> <a href="{{ .Annotations.dashboard_url }}">{{ .Annotations.dashboard_url }}</a></p>
+{{ end }}
+
+<div class="details">
+<strong>Labels:</strong><br>
+{{ range .Labels.SortedPairs }}
+<span class="label">{{ .Name }}: {{ .Value }}</span>
+{{ end }}
+</div>
+</div>
+{{ end }}
+{{ end }}
+
+{{ if gt (len .Alerts.Resolved) 0 }}
+<h3>✅ Resolved Alerts</h3>
+{{ range .Alerts.Resolved }}
+<div class="alert resolved">
+<h4>{{ .Annotations.summary }}</h4>
+<p><strong>Description:</strong> {{ .Annotations.description }}</p>
+<p><strong>Duration:</strong> {{ .StartsAt.Format "2006-01-02 15:04:05" }} - {{ .EndsAt.Format "2006-01-02 15:04:05" }} UTC</p>
+</div>
+{{ end }}
+{{ end }}
+
+</body>
+</html>
+{{ end }}
+
+{{ define "pagerduty.kvstore.description" }}
+{{ .CommonAnnotations.summary }}{{ if .CommonAnnotations.description }} - {{ .CommonAnnotations.description }}{{ end }}
+{{ end }}
+
+{{ define "pagerduty.kvstore.client" }}
+KVStore Monitoring
+{{ end }}
+
+{{ define "webhook.kvstore.json" }}
+{
+  "status": "{{ .Status }}",
+  "alerts": [
+    {{ range $i, $alert := .Alerts }}{{ if $i }},{{ end }}
+    {
+      "status": "{{ $alert.Status }}",
+      "labels": {
+        {{ range $j, $label := $alert.Labels.SortedPairs }}{{ if $j }},{{ end }}
+        "{{ $label.Name }}": "{{ $label.Value }}"{{ end }}
+      },
+      "annotations": {
+        {{ range $j, $annotation := $alert.Annotations.SortedPairs }}{{ if $j }},{{ end }}
+        "{{ $annotation.Name }}": "{{ $annotation.Value }}"{{ end }}
+      },
+      "startsAt": "{{ $alert.StartsAt.Format "2006-01-02T15:04:05.000Z" }}",
+      "endsAt": "{{ $alert.EndsAt.Format "2006-01-02T15:04:05.000Z" }}",
+      "generatorURL": "{{ $alert.GeneratorURL }}"
+    }{{ end }}
+  ],
+  "groupLabels": {
+    {{ range $j, $label := .GroupLabels.SortedPairs }}{{ if $j }},{{ end }}
+    "{{ $label.Name }}": "{{ $label.Value }}"{{ end }}
+  },
+  "commonLabels": {
+    {{ range $j, $label := .CommonLabels.SortedPairs }}{{ if $j }},{{ end }}
+    "{{ $label.Name }}": "{{ $label.Value }}"{{ end }}
+  },
+  "commonAnnotations": {
+    {{ range $j, $annotation := .CommonAnnotations.SortedPairs }}{{ if $j }},{{ end }}
+    "{{ $annotation.Name }}": "{{ $annotation.Value }}"{{ end }}
+  },
+  "externalURL": "{{ .ExternalURL }}",
+  "version": "4",
+  "groupKey": "{{ .GroupKey }}",
+  "truncatedAlerts": {{ .Alerts.TruncatedAlerts }}
+}
+{{ end }}
+
+{{ define "teams.kvstore.title" }}
+{{ if eq .Status "firing" }}🔥 KVStore Alert{{ else }}✅ KVStore Alert Resolved{{ end }}
+{{ end }}
+
+{{ define "teams.kvstore.text" }}
+**Cluster:** {{ .CommonLabels.cluster | default "unknown" }}  
+**Environment:** {{ .CommonLabels.environment | default "unknown" }}  
+**Status:** {{ .Status | title }}
+
+{{ if eq .Status "firing" }}
+{{ range .Alerts.Firing }}
+**Alert:** {{ .Annotations.summary }}  
+**Severity:** {{ .Labels.severity | title }}  
+**Description:** {{ .Annotations.description }}  
+**Started:** {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}  
+{{ if .Annotations.runbook_url }}**Runbook:** [View Runbook]({{ .Annotations.runbook_url }})  {{ end }}
+{{ if .Annotations.dashboard_url }}**Dashboard:** [View Dashboard]({{ .Annotations.dashboard_url }})  {{ end }}
+
+{{ end }}
+{{ else }}
+{{ range .Alerts.Resolved }}
+**Resolved:** {{ .Annotations.summary }}  
+**Duration:** {{ .StartsAt.Format "15:04" }} - {{ .EndsAt.Format "15:04" }} UTC  
+{{ end }}
+{{ end }}
+{{ end }}

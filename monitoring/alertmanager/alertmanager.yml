@@ -1,0 +1,371 @@
+# Alertmanager configuration for KVStore
+global:
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_from: 'alerts@kvstore.example.com'
+  smtp_auth_username: 'alerts@kvstore.example.com'
+  smtp_auth_password: '${SMTP_PASSWORD}'
+  smtp_require_tls: true
+  
+  slack_api_url: '${SLACK_WEBHOOK_URL}'
+  
+  # Resolve timeout
+  resolve_timeout: 5m
+
+# Templates for notifications
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# Route tree for alert notifications
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'default-receiver'
+  
+  routes:
+    # Critical alerts - immediate notification
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      group_wait: 0s
+      group_interval: 30s
+      repeat_interval: 5m
+      routes:
+        - match:
+            alertname: KVStoreClusterDown
+          receiver: 'cluster-down-alerts'
+        - match:
+            alertname: KVStoreClusterMajorityDown
+          receiver: 'cluster-majority-down'
+        - match:
+            alertname: KVStoreClusterSplitBrain
+          receiver: 'cluster-split-brain'
+    
+    # High priority alerts
+    - match:
+        severity: high
+      receiver: 'high-priority-alerts'
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 30m
+    
+    # Performance alerts
+    - match:
+        component: performance
+      receiver: 'performance-alerts'
+      group_interval: 5m
+      repeat_interval: 1h
+    
+    # Resource alerts
+    - match:
+        component: resources
+      receiver: 'resource-alerts'
+      group_interval: 10m
+      repeat_interval: 2h
+    
+    # Raft consensus alerts
+    - match:
+        component: raft
+      receiver: 'raft-alerts'
+      group_interval: 2m
+      repeat_interval: 15m
+    
+    # Security alerts
+    - match:
+        component: security
+      receiver: 'security-alerts'
+      group_wait: 0s
+      repeat_interval: 10m
+    
+    # Backup alerts
+    - match:
+        component: backup
+      receiver: 'backup-alerts'
+      group_interval: 1h
+      repeat_interval: 12h
+    
+    # Capacity planning alerts
+    - match:
+        component: capacity
+      receiver: 'capacity-alerts'
+      group_interval: 1h
+      repeat_interval: 24h
+
+# Inhibition rules to suppress redundant alerts
+inhibit_rules:
+  # Inhibit warning alerts if critical alerts are firing
+  - source_match:
+      severity: critical
+    target_match:
+      severity: warning
+    equal: ['alertname', 'cluster', 'instance']
+  
+  # Inhibit individual node alerts if cluster majority is down
+  - source_match:
+      alertname: KVStoreClusterMajorityDown
+    target_match_re:
+      alertname: 'KVStore.*'
+    equal: ['cluster']
+  
+  # Inhibit high latency alerts if cluster is down
+  - source_match:
+      alertname: KVStoreClusterDown
+    target_match:
+      alertname: KVStoreHighLatency
+    equal: ['cluster', 'instance']
+
+# Receiver configurations
+receivers:
+  # Default receiver
+  - name: 'default-receiver'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#kvstore-alerts'
+        title: 'KVStore Alert'
+        text: >-
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Severity:* {{ .Labels.severity }}
+          *Cluster:* {{ .Labels.cluster }}
+          {{ end }}
+  
+  # Critical alerts - multiple channels
+  - name: 'critical-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#kvstore-critical'
+        title: '🚨 CRITICAL KVStore Alert'
+        text: >-
+          <!channel>
+          {{ range .Alerts }}
+          *CRITICAL ALERT:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Cluster:* {{ .Labels.cluster }}
+          *Instance:* {{ .Labels.instance }}
+          *Runbook:* {{ .Annotations.runbook_url }}
+          {{ end }}
+        color: 'danger'
+    
+    email_configs:
+      - to: 'sre-team@example.com,platform-team@example.com'
+        subject: '[CRITICAL] KVStore Alert - {{ .GroupLabels.alertname }}'
+        body: |
+          Critical alert detected in KVStore cluster.
+          
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Severity: {{ .Labels.severity }}
+          Cluster: {{ .Labels.cluster }}
+          Instance: {{ .Labels.instance }}
+          Runbook: {{ .Annotations.runbook_url }}
+          
+          Fired at: {{ .StartsAt }}
+          {{ end }}
+    
+    pagerduty_configs:
+      - routing_key: '${PAGERDUTY_ROUTING_KEY}'
+        description: 'KVStore Critical Alert: {{ .GroupLabels.alertname }}'
+        details:
+          cluster: '{{ .GroupLabels.cluster }}'
+          alertname: '{{ .GroupLabels.alertname }}'
+          summary: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+  
+  # Cluster down alerts - immediate escalation
+  - name: 'cluster-down-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#incident-response'
+        title: '🔥 CLUSTER DOWN - Immediate Action Required'
+        text: >-
+          <!channel> @here
+          {{ range .Alerts }}
+          *CLUSTER DOWN:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Cluster:* {{ .Labels.cluster }}
+          *Instance:* {{ .Labels.instance }}
+          *Action Required:* Immediate investigation and response
+          *Runbook:* {{ .Annotations.runbook_url }}
+          {{ end }}
+        color: 'danger'
+    
+    webhook_configs:
+      - url: '${INCIDENT_WEBHOOK_URL}'
+        http_config:
+          basic_auth:
+            username: '${WEBHOOK_USERNAME}'
+            password: '${WEBHOOK_PASSWORD}'
+        send_resolved: true
+  
+  # Cluster majority down - emergency response
+  - name: 'cluster-majority-down'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#incident-response'
+        title: '🚨 CLUSTER MAJORITY DOWN - EMERGENCY'
+        text: >-
+          <!channel> @here EMERGENCY RESPONSE REQUIRED
+          {{ range .Alerts }}
+          *MAJORITY DOWN:* {{ .Annotations.summary }}
+          *Available Nodes:* {{ .Labels.available_nodes }}
+          *Total Nodes:* {{ .Labels.total_nodes }}
+          *Impact:* Cluster unavailable, data writes stopped
+          *Action:* Execute emergency recovery procedures
+          *Runbook:* {{ .Annotations.runbook_url }}
+          {{ end }}
+        color: 'danger'
+  
+  # Split brain detection - critical consensus issue
+  - name: 'cluster-split-brain'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#incident-response'
+        title: '⚠️ SPLIT BRAIN DETECTED'
+        text: >-
+          <!channel> SPLIT BRAIN SCENARIO DETECTED
+          {{ range .Alerts }}
+          *Split Brain:* {{ .Annotations.summary }}
+          *Leaders Detected:* {{ .Labels.leader_count }}
+          *Risk:* Data inconsistency and corruption
+          *Action:* Immediate manual intervention required
+          *Runbook:* {{ .Annotations.runbook_url }}
+          {{ end }}
+        color: 'danger'
+  
+  # High priority alerts
+  - name: 'high-priority-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#kvstore-alerts'
+        title: '⚠️ High Priority KVStore Alert'
+        text: >-
+          {{ range .Alerts }}
+          *High Priority Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Cluster:* {{ .Labels.cluster }}
+          *Severity:* {{ .Labels.severity }}
+          *Runbook:* {{ .Annotations.runbook_url }}
+          {{ end }}
+        color: 'warning'
+    
+    email_configs:
+      - to: 'platform-team@example.com'
+        subject: '[HIGH] KVStore Alert - {{ .GroupLabels.alertname }}'
+        body: |
+          High priority alert in KVStore cluster.
+          
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Cluster: {{ .Labels.cluster }}
+          Runbook: {{ .Annotations.runbook_url }}
+          {{ end }}
+  
+  # Performance alerts
+  - name: 'performance-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#kvstore-performance'
+        title: '📊 KVStore Performance Alert'
+        text: >-
+          {{ range .Alerts }}
+          *Performance Issue:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Metric:* {{ .Labels.metric_name }}
+          *Value:* {{ .Labels.metric_value }}
+          *Threshold:* {{ .Labels.threshold }}
+          {{ end }}
+        color: '#FF9500'
+  
+  # Resource alerts
+  - name: 'resource-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#kvstore-resources'
+        title: '💻 KVStore Resource Alert'
+        text: >-
+          {{ range .Alerts }}
+          *Resource Alert:* {{ .Annotations.summary }}
+          *Resource:* {{ .Labels.resource_type }}
+          *Usage:* {{ .Labels.usage_percent }}%
+          *Instance:* {{ .Labels.instance }}
+          *Recommendation:* {{ .Annotations.recommendation }}
+          {{ end }}
+        color: '#36C5F0'
+  
+  # Raft consensus alerts
+  - name: 'raft-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#kvstore-consensus'
+        title: '🗳️ KVStore Raft Alert'
+        text: >-
+          {{ range .Alerts }}
+          *Raft Issue:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Leader:* {{ .Labels.leader_node }}
+          *Term:* {{ .Labels.raft_term }}
+          *Impact:* {{ .Annotations.impact }}
+          {{ end }}
+        color: '#2EB67D'
+  
+  # Security alerts
+  - name: 'security-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#security-alerts'
+        title: '🔒 KVStore Security Alert'
+        text: >-
+          {{ range .Alerts }}
+          *Security Alert:* {{ .Annotations.summary }}
+          *Type:* {{ .Labels.security_type }}
+          *Source:* {{ .Labels.source_ip }}
+          *Action Required:* {{ .Annotations.action_required }}
+          {{ end }}
+        color: 'danger'
+    
+    email_configs:
+      - to: 'security-team@example.com'
+        subject: '[SECURITY] KVStore Alert - {{ .GroupLabels.alertname }}'
+        body: |
+          Security alert detected in KVStore cluster.
+          
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Type: {{ .Labels.security_type }}
+          Source: {{ .Labels.source_ip }}
+          Timestamp: {{ .StartsAt }}
+          {{ end }}
+  
+  # Backup alerts
+  - name: 'backup-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#kvstore-backup'
+        title: '💾 KVStore Backup Alert'
+        text: >-
+          {{ range .Alerts }}
+          *Backup Alert:* {{ .Annotations.summary }}
+          *Last Backup:* {{ .Labels.last_backup_time }}
+          *Status:* {{ .Labels.backup_status }}
+          *Action:* {{ .Annotations.recommended_action }}
+          {{ end }}
+        color: '#E01E5A'
+  
+  # Capacity planning alerts
+  - name: 'capacity-alerts'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#kvstore-capacity'
+        title: '📈 KVStore Capacity Alert'
+        text: >-
+          {{ range .Alerts }}
+          *Capacity Alert:* {{ .Annotations.summary }}
+          *Resource:* {{ .Labels.resource_type }}
+          *Current Usage:* {{ .Labels.current_usage }}
+          *Projected Full:* {{ .Labels.projected_full_date }}
+          *Recommendation:* {{ .Annotations.capacity_recommendation }}
+          {{ end }}
+        color: '#ECB22E'

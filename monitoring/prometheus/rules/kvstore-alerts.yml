@@ -1,0 +1,286 @@
+# KVStore Alerting Rules
+groups:
+  - name: kvstore.cluster
+    interval: 30s
+    rules:
+      # Cluster Health Alerts
+      - alert: KVStoreClusterDown
+        expr: up{job="kvstore"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: cluster
+        annotations:
+          summary: "KVStore cluster node is down"
+          description: "KVStore node {{ $labels.kubernetes_pod_name }} in namespace {{ $labels.kubernetes_namespace }} has been down for more than 1 minute."
+          runbook_url: "https://runbook.example.com/kvstore/cluster-down"
+
+      - alert: KVStoreClusterMajorityDown
+        expr: count(up{job="kvstore"} == 1) < (count(up{job="kvstore"}) / 2 + 1)
+        for: 30s
+        labels:
+          severity: critical
+          component: cluster
+        annotations:
+          summary: "KVStore cluster majority is down"
+          description: "Less than majority of KVStore nodes are available. Current available: {{ $value }}"
+          runbook_url: "https://runbook.example.com/kvstore/majority-down"
+
+      - alert: KVStoreClusterSplitBrain
+        expr: count(kvstore_raft_leader{leader="true"} == 1) > 1
+        for: 30s
+        labels:
+          severity: critical
+          component: raft
+        annotations:
+          summary: "KVStore cluster split brain detected"
+          description: "Multiple Raft leaders detected in KVStore cluster. Leaders: {{ $value }}"
+          runbook_url: "https://runbook.example.com/kvstore/split-brain"
+
+  - name: kvstore.performance
+    interval: 30s
+    rules:
+      # Performance Alerts
+      - alert: KVStoreHighLatency
+        expr: kvstore:latency_95th_5m > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          component: performance
+        annotations:
+          summary: "KVStore high request latency"
+          description: "95th percentile latency is {{ $value }}s for {{ $labels.kubernetes_pod_name }}"
+          runbook_url: "https://runbook.example.com/kvstore/high-latency"
+
+      - alert: KVStoreHighErrorRate
+        expr: (kvstore:error_rate_5m / kvstore:request_rate_5m) * 100 > 5
+        for: 3m
+        labels:
+          severity: warning
+          component: performance
+        annotations:
+          summary: "KVStore high error rate"
+          description: "Error rate is {{ $value }}% for {{ $labels.kubernetes_pod_name }}"
+          runbook_url: "https://runbook.example.com/kvstore/high-error-rate"
+
+      - alert: KVStoreRequestOverload
+        expr: kvstore:request_rate_5m > 1000
+        for: 2m
+        labels:
+          severity: warning
+          component: performance
+        annotations:
+          summary: "KVStore request overload"
+          description: "Request rate is {{ $value }} req/s for {{ $labels.kubernetes_pod_name }}"
+          runbook_url: "https://runbook.example.com/kvstore/request-overload"
+
+  - name: kvstore.resources
+    interval: 60s
+    rules:
+      # Resource Alerts
+      - alert: KVStoreHighMemoryUsage
+        expr: kvstore:memory_usage_percent > 85
+        for: 5m
+        labels:
+          severity: warning
+          component: resources
+        annotations:
+          summary: "KVStore high memory usage"
+          description: "Memory usage is {{ $value }}% for {{ $labels.kubernetes_pod_name }}"
+          runbook_url: "https://runbook.example.com/kvstore/high-memory"
+
+      - alert: KVStoreCriticalMemoryUsage
+        expr: kvstore:memory_usage_percent > 95
+        for: 1m
+        labels:
+          severity: critical
+          component: resources
+        annotations:
+          summary: "KVStore critical memory usage"
+          description: "Memory usage is {{ $value }}% for {{ $labels.kubernetes_pod_name }}"
+          runbook_url: "https://runbook.example.com/kvstore/critical-memory"
+
+      - alert: KVStoreHighCPUUsage
+        expr: rate(process_cpu_seconds_total{job="kvstore"}[5m]) * 100 > 80
+        for: 10m
+        labels:
+          severity: warning
+          component: resources
+        annotations:
+          summary: "KVStore high CPU usage"
+          description: "CPU usage is {{ $value }}% for {{ $labels.kubernetes_pod_name }}"
+          runbook_url: "https://runbook.example.com/kvstore/high-cpu"
+
+      - alert: KVStoreStorageSpaceLow
+        expr: (kvstore_storage_free_bytes / kvstore_storage_total_bytes) * 100 < 15
+        for: 5m
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "KVStore storage space low"
+          description: "Storage space is {{ $value }}% free for {{ $labels.kubernetes_pod_name }}"
+          runbook_url: "https://runbook.example.com/kvstore/storage-low"
+
+      - alert: KVStoreStorageSpaceCritical
+        expr: (kvstore_storage_free_bytes / kvstore_storage_total_bytes) * 100 < 5
+        for: 1m
+        labels:
+          severity: critical
+          component: storage
+        annotations:
+          summary: "KVStore storage space critical"
+          description: "Storage space is {{ $value }}% free for {{ $labels.kubernetes_pod_name }}"
+          runbook_url: "https://runbook.example.com/kvstore/storage-critical"
+
+  - name: kvstore.raft
+    interval: 30s
+    rules:
+      # Raft Consensus Alerts
+      - alert: KVStoreRaftLeaderElection
+        expr: increase(kvstore_raft_leader_elections_total[10m]) > 2
+        for: 1m
+        labels:
+          severity: warning
+          component: raft
+        annotations:
+          summary: "KVStore frequent Raft leader elections"
+          description: "{{ $value }} leader elections in the last 10 minutes for {{ $labels.kubernetes_pod_name }}"
+          runbook_url: "https://runbook.example.com/kvstore/frequent-elections"
+
+      - alert: KVStoreRaftNoLeader
+        expr: count(kvstore_raft_leader{leader="true"} == 1) == 0
+        for: 30s
+        labels:
+          severity: critical
+          component: raft
+        annotations:
+          summary: "KVStore no Raft leader"
+          description: "No Raft leader found in KVStore cluster"
+          runbook_url: "https://runbook.example.com/kvstore/no-leader"
+
+      - alert: KVStoreRaftHighCommitLatency
+        expr: kvstore_raft_commit_latency_seconds > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: raft
+        annotations:
+          summary: "KVStore high Raft commit latency"
+          description: "Raft commit latency is {{ $value }}s for {{ $labels.kubernetes_pod_name }}"
+          runbook_url: "https://runbook.example.com/kvstore/raft-latency"
+
+      - alert: KVStoreRaftLogReplicationLag
+        expr: kvstore_raft_log_replication_lag > 100
+        for: 2m
+        labels:
+          severity: warning
+          component: raft
+        annotations:
+          summary: "KVStore Raft log replication lag"
+          description: "Raft log replication lag is {{ $value }} entries for {{ $labels.kubernetes_pod_name }}"
+          runbook_url: "https://runbook.example.com/kvstore/replication-lag"
+
+  - name: kvstore.network
+    interval: 30s
+    rules:
+      # Network Alerts
+      - alert: KVStoreNetworkPartition
+        expr: kvstore_network_partition_detected == 1
+        for: 30s
+        labels:
+          severity: critical
+          component: network
+        annotations:
+          summary: "KVStore network partition detected"
+          description: "Network partition detected for {{ $labels.kubernetes_pod_name }}"
+          runbook_url: "https://runbook.example.com/kvstore/network-partition"
+
+      - alert: KVStoreHighNetworkLatency
+        expr: kvstore_network_latency_seconds > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: network
+        annotations:
+          summary: "KVStore high network latency"
+          description: "Network latency is {{ $value }}s for {{ $labels.kubernetes_pod_name }}"
+          runbook_url: "https://runbook.example.com/kvstore/network-latency"
+
+  - name: kvstore.capacity
+    interval: 300s
+    rules:
+      # Capacity Planning Alerts
+      - alert: KVStorePredictedCapacityExceeded
+        expr: predict_linear(kvstore:storage_size_bytes[6h], 7*24*3600) > kvstore_storage_total_bytes * 0.9
+        for: 30m
+        labels:
+          severity: warning
+          component: capacity
+        annotations:
+          summary: "KVStore storage capacity will be exceeded"
+          description: "Storage capacity predicted to exceed 90% in 7 days for {{ $labels.kubernetes_pod_name }}"
+          runbook_url: "https://runbook.example.com/kvstore/capacity-planning"
+
+      - alert: KVStoreHighConnectionCount
+        expr: kvstore_active_connections > kvstore_max_connections * 0.8
+        for: 10m
+        labels:
+          severity: warning
+          component: capacity
+        annotations:
+          summary: "KVStore high connection count"
+          description: "Active connections ({{ $value }}) approaching limit for {{ $labels.kubernetes_pod_name }}"
+          runbook_url: "https://runbook.example.com/kvstore/connection-limit"
+
+  - name: kvstore.backup
+    interval: 3600s
+    rules:
+      # Backup Alerts
+      - alert: KVStoreBackupFailed
+        expr: time() - kvstore_last_backup_timestamp > 24*3600
+        for: 1h
+        labels:
+          severity: warning
+          component: backup
+        annotations:
+          summary: "KVStore backup failed or overdue"
+          description: "Last successful backup was {{ $value | humanizeDuration }} ago"
+          runbook_url: "https://runbook.example.com/kvstore/backup-failed"
+
+      - alert: KVStoreSnapshotFailed
+        expr: time() - kvstore_last_snapshot_timestamp > 2*3600
+        for: 30m
+        labels:
+          severity: warning
+          component: backup
+        annotations:
+          summary: "KVStore snapshot failed or overdue"
+          description: "Last successful snapshot was {{ $value | humanizeDuration }} ago"
+          runbook_url: "https://runbook.example.com/kvstore/snapshot-failed"
+
+  - name: kvstore.security
+    interval: 300s
+    rules:
+      # Security Alerts
+      - alert: KVStoreUnauthorizedAccess
+        expr: increase(kvstore_unauthorized_requests_total[15m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: "KVStore unauthorized access attempts"
+          description: "{{ $value }} unauthorized access attempts in the last 15 minutes"
+          runbook_url: "https://runbook.example.com/kvstore/unauthorized-access"
+
+      - alert: KVStoreTLSCertificateExpiring
+        expr: (kvstore_tls_certificate_expiry_timestamp - time()) / 3600 / 24 < 30
+        for: 1h
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: "KVStore TLS certificate expiring soon"
+          description: "TLS certificate expires in {{ $value }} days for {{ $labels.kubernetes_pod_name }}"
+          runbook_url: "https://runbook.example.com/kvstore/cert-expiry"
