@@ -48,7 +48,7 @@ func BenchmarkRealPerformance(b *testing.B) {
 
 		b.ReportMetric(opsPerSec, "ops/sec")
 		b.ReportMetric(float64(duration.Nanoseconds()/int64(b.N))/1e6, "ms/op")
-		
+
 		b.Logf("PUT Performance: %.0f ops/sec, %.2f ms/op", opsPerSec, float64(duration.Nanoseconds()/int64(b.N))/1e6)
 	})
 
@@ -76,7 +76,7 @@ func BenchmarkRealPerformance(b *testing.B) {
 
 		b.ReportMetric(opsPerSec, "ops/sec")
 		b.ReportMetric(float64(duration.Nanoseconds()/int64(b.N))/1e6, "ms/op")
-		
+
 		b.Logf("GET Performance: %.0f ops/sec, %.2f ms/op", opsPerSec, float64(duration.Nanoseconds()/int64(b.N))/1e6)
 	})
 
@@ -101,7 +101,7 @@ func BenchmarkRealPerformance(b *testing.B) {
 			wg.Add(1)
 			go func(workerID int) {
 				defer wg.Done()
-				
+
 				opsPerWorker := b.N / numWorkers
 				for i := 0; i < opsPerWorker; i++ {
 					if float64(i%100)/100.0 < readRatio {
@@ -132,7 +132,7 @@ func BenchmarkRealPerformance(b *testing.B) {
 
 		b.ReportMetric(opsPerSec, "ops/sec")
 		b.ReportMetric(float64(duration.Nanoseconds()/totalOps)/1e6, "ms/op")
-		
+
 		b.Logf("Mixed Workload (80%% read): %.0f ops/sec with %d workers", opsPerSec, numWorkers)
 	})
 }
@@ -147,14 +147,14 @@ func TestRealLatencyMeasurement(t *testing.T) {
 	value := make([]byte, 1024)
 
 	t.Log("Measuring PUT latencies...")
-	
+
 	for i := 0; i < numOps; i++ {
 		key := fmt.Sprintf("latency-key-%d", i)
-		
+
 		start := time.Now()
 		err := engine.Put([]byte(key), value)
 		latencies[i] = time.Since(start)
-		
+
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -162,7 +162,7 @@ func TestRealLatencyMeasurement(t *testing.T) {
 
 	// Calculate percentiles
 	results := calculateLatencyPercentiles(latencies)
-	
+
 	t.Logf("PUT Latency Results (%d operations):", numOps)
 	t.Logf("  P50: %v", results.LatencyP50)
 	t.Logf("  P95: %v", results.LatencyP95)
@@ -171,23 +171,23 @@ func TestRealLatencyMeasurement(t *testing.T) {
 
 	// Test GET latencies
 	getLatencies := make([]time.Duration, numOps)
-	
+
 	t.Log("Measuring GET latencies...")
-	
+
 	for i := 0; i < numOps; i++ {
 		key := fmt.Sprintf("latency-key-%d", i%1000) // Reuse keys for cache effects
-		
+
 		start := time.Now()
 		_, err := engine.Get([]byte(key))
 		getLatencies[i] = time.Since(start)
-		
+
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	getResults := calculateLatencyPercentiles(getLatencies)
-	
+
 	t.Logf("GET Latency Results (%d operations):", numOps)
 	t.Logf("  P50: %v", getResults.LatencyP50)
 	t.Logf("  P95: %v", getResults.LatencyP95)
@@ -216,7 +216,7 @@ func TestRealThroughputScaling(t *testing.T) {
 			wg.Add(1)
 			go func(workerID int) {
 				defer wg.Done()
-				
+
 				for i := 0; i < opsPerWorker; i++ {
 					key := fmt.Sprintf("scale-key-%d-%d", workerID, i)
 					err := engine.Put([]byte(key), value)
@@ -233,7 +233,7 @@ func TestRealThroughputScaling(t *testing.T) {
 		duration := time.Since(start)
 		opsPerSec := float64(totalOps) / duration.Seconds()
 
-		t.Logf("  %d workers: %.0f ops/sec (%.2f ms/op avg)", 
+		t.Logf("  %d workers: %.0f ops/sec (%.2f ms/op avg)",
 			workers, opsPerSec, float64(duration.Nanoseconds()/totalOps)/1e6)
 	}
 }

@@ -1,10 +1,11 @@
 # Alertmanager configuration for KVStore
 global:
-  smtp_smarthost: 'smtp.gmail.com:587'
-  smtp_from: 'alerts@kvstore.example.com'
-  smtp_auth_username: 'alerts@kvstore.example.com'
-  smtp_auth_password: '${SMTP_PASSWORD}'
-  smtp_require_tls: true
+  # SMTP configuration disabled to prevent email notifications
+  # smtp_smarthost: 'smtp.gmail.com:587'
+  # smtp_from: 'alerts@kvstore.example.com'
+  # smtp_auth_username: 'alerts@kvstore.example.com'
+  # smtp_auth_password: '${SMTP_PASSWORD}'
+  # smtp_require_tls: true
   
   slack_api_url: '${SLACK_WEBHOOK_URL}'
   
@@ -148,22 +149,23 @@ receivers:
           {{ end }}
         color: 'danger'
     
-    email_configs:
-      - to: 'sre-team@example.com,platform-team@example.com'
-        subject: '[CRITICAL] KVStore Alert - {{ .GroupLabels.alertname }}'
-        body: |
-          Critical alert detected in KVStore cluster.
-          
-          {{ range .Alerts }}
-          Alert: {{ .Annotations.summary }}
-          Description: {{ .Annotations.description }}
-          Severity: {{ .Labels.severity }}
-          Cluster: {{ .Labels.cluster }}
-          Instance: {{ .Labels.instance }}
-          Runbook: {{ .Annotations.runbook_url }}
-          
-          Fired at: {{ .StartsAt }}
-          {{ end }}
+    # Email notifications disabled
+    # email_configs:
+    #   - to: 'sre-team@example.com,platform-team@example.com'
+    #     subject: '[CRITICAL] KVStore Alert - {{ .GroupLabels.alertname }}'
+    #     body: |
+    #       Critical alert detected in KVStore cluster.
+    #       
+    #       {{ range .Alerts }}
+    #       Alert: {{ .Annotations.summary }}
+    #       Description: {{ .Annotations.description }}
+    #       Severity: {{ .Labels.severity }}
+    #       Cluster: {{ .Labels.cluster }}
+    #       Instance: {{ .Labels.instance }}
+    #       Runbook: {{ .Annotations.runbook_url }}
+    #       
+    #       Fired at: {{ .StartsAt }}
+    #       {{ end }}
     
     pagerduty_configs:
       - routing_key: '${PAGERDUTY_ROUTING_KEY}'
@@ -250,18 +252,19 @@ receivers:
           {{ end }}
         color: 'warning'
     
-    email_configs:
-      - to: 'platform-team@example.com'
-        subject: '[HIGH] KVStore Alert - {{ .GroupLabels.alertname }}'
-        body: |
-          High priority alert in KVStore cluster.
-          
-          {{ range .Alerts }}
-          Alert: {{ .Annotations.summary }}
-          Description: {{ .Annotations.description }}
-          Cluster: {{ .Labels.cluster }}
-          Runbook: {{ .Annotations.runbook_url }}
-          {{ end }}
+    # Email notifications disabled
+    # email_configs:
+    #   - to: 'platform-team@example.com'
+    #     subject: '[HIGH] KVStore Alert - {{ .GroupLabels.alertname }}'
+    #     body: |
+    #       High priority alert in KVStore cluster.
+    #       
+    #       {{ range .Alerts }}
+    #       Alert: {{ .Annotations.summary }}
+    #       Description: {{ .Annotations.description }}
+    #       Cluster: {{ .Labels.cluster }}
+    #       Runbook: {{ .Annotations.runbook_url }}
+    #       {{ end }}
   
   # Performance alerts
   - name: 'performance-alerts'
@@ -326,18 +329,19 @@ receivers:
           {{ end }}
         color: 'danger'
     
-    email_configs:
-      - to: 'security-team@example.com'
-        subject: '[SECURITY] KVStore Alert - {{ .GroupLabels.alertname }}'
-        body: |
-          Security alert detected in KVStore cluster.
-          
-          {{ range .Alerts }}
-          Alert: {{ .Annotations.summary }}
-          Type: {{ .Labels.security_type }}
-          Source: {{ .Labels.source_ip }}
-          Timestamp: {{ .StartsAt }}
-          {{ end }}
+    # Email notifications disabled
+    # email_configs:
+    #   - to: 'security-team@example.com'
+    #     subject: '[SECURITY] KVStore Alert - {{ .GroupLabels.alertname }}'
+    #     body: |
+    #       Security alert detected in KVStore cluster.
+    #       
+    #       {{ range .Alerts }}
+    #       Alert: {{ .Annotations.summary }}
+    #       Type: {{ .Labels.security_type }}
+    #       Source: {{ .Labels.source_ip }}
+    #       Timestamp: {{ .StartsAt }}
+    #       {{ end }}
   
   # Backup alerts
   - name: 'backup-alerts'
