@@ -1,9 +1,5 @@
 # Distributed Key-Value Store
 
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
-[![Go Version](https://img.shields.io/badge/go-1.21+-blue.svg)](https://golang.org)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Coverage](https://img.shields.io/badge/coverage-95%25-brightgreen.svg)]()
 
 A **production-ready, high-performance distributed key-value store** designed for modern cloud-native applications. Built with Go, featuring BadgerDB storage engine and Raft consensus for strong consistency and fault tolerance.
 
