@@ -42,7 +42,6 @@ A **production-ready, high-performance distributed key-value store** designed fo
 - [Deployment](#-deployment)
 - [Monitoring](#-monitoring)
 - [Security](#-security)
-- [Contributing](#-contributing)
 
 ## 🎯 Quick Start
 
@@ -360,37 +359,6 @@ rate(kvstore_storage_operations_total[5m])
 - [ ] Service mesh integration
 - [ ] Advanced Kubernetes operator
 
-## 🤝 Contributing
-
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
-### Quick Start for Contributors
-
-```bash
-# Set up development environment
-git clone https://github.com/your-org/distributed-kvstore.git
-cd distributed-kvstore
-make dev-setup
-
-# Run tests
-make test
-
-# Submit changes
-git checkout -b feature/my-feature
-# ... make changes ...
-make test lint
-git commit -m "Add amazing feature"
-git push origin feature/my-feature
-# Create pull request
-```
-
-### Community
-
-- **GitHub Discussions**: Questions and community support
-- **Slack**: Real-time chat ([Join here](https://kvstore-community.slack.com))
-- **Weekly Office Hours**: Every Tuesday 2PM PST
-- **Contributing Guide**: [CONTRIBUTING.md](CONTRIBUTING.md)
-
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
@@ -410,4 +378,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**[⬆ Back to Top](#distributed-key-value-store)** | **[📖 Documentation](docs/)** | **[🐛 Report Issues](https://github.com/your-org/distributed-kvstore/issues)** | **[💬 Join Community](https://kvstore-community.slack.com)**
+**[⬆ Back to Top](#distributed-key-value-store)** | **[📖 Documentation](docs/)**
