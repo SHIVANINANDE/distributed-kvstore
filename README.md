@@ -395,7 +395,13 @@ git push origin feature/my-feature
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
+## � Author
+
+**Shivani Nande**
+- GitHub: [@SHIVANINANDE](https://github.com/SHIVANINANDE)
+- Email: shivani.golu.nande.8@gmail.com
+
+## �🙏 Acknowledgments
 
 - **BadgerDB**: High-performance storage engine
 - **etcd/raft**: Raft consensus implementation reference
