@@ -11,3 +11,6 @@ MANIFEST
 LOCK
 DISCARD
 
+# Claude AI assistant files
+.claude/
+

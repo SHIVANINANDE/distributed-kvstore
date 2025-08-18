@@ -500,6 +500,6 @@ This security compliance documentation provides a comprehensive framework for ma
 For questions or clarifications regarding security compliance, contact the security team at security@company.com.
 
 **Document Version**: 1.0  
-**Last Updated**: Generated with Claude Code  
+**Last Updated**: August 2025  
 **Next Review**: Quarterly  
 **Classification**: Internal Use Only
