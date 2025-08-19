@@ -40,6 +40,16 @@ A **production-ready, high-performance distributed key-value store** designed fo
 - [Monitoring](#-monitoring)
 - [Security](#-security)
 
+## 📋 **Portfolio & Technical Documentation**
+
+**Complete project overview for recruiters, hiring managers, and technical teams:**
+
+- 📋 **[Complete Portfolio](PORTFOLIO.md)** - Executive summary, verified performance metrics, and technical architecture in one comprehensive document
+
+*Perfect for resume discussions, technical interviews, and architectural reviews*
+
+---
+
 ## 🎯 Quick Start
 
 ### Prerequisites
@@ -402,6 +412,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 **Shivani Nande**
 - GitHub: [@SHIVANINANDE](https://github.com/SHIVANINANDE)
 - Email: shivani.golu.nande.8@gmail.com
+
+**For Portfolio/Resume Reviews:**
+- 📋 [Complete Portfolio Document](PORTFOLIO.md) - All technical details, performance metrics, and architecture in one place
 
 ## �🙏 Acknowledgments
 
