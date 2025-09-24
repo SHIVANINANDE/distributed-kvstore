@@ -383,25 +383,6 @@ rate(kvstore_storage_operations_total[5m])
 - **Dependency Management**: Automated vulnerability scanning
 - **Code Review**: Required for all changes
 
-## 📈 Roadmap
-
-### 2024 Q1 - Enhanced Features
-- [ ] Secondary indexes and custom schemas
-- [ ] Multi-region active-active replication  
-- [ ] Advanced compression algorithms
-- [ ] GraphQL query interface
-
-### 2024 Q2 - Enterprise Features  
-- [ ] LDAP/Active Directory integration
-- [ ] Advanced analytics and reporting
-- [ ] ML-based auto-tuning
-- [ ] Edge computing support
-
-### 2024 Q3 - Ecosystem Integration
-- [ ] Kafka change data capture
-- [ ] Apache Spark connector
-- [ ] Service mesh integration
-- [ ] Advanced Kubernetes operator
 
 ## 📄 License
 
@@ -411,7 +392,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **Shivani Nande**
 - GitHub: [@SHIVANINANDE](https://github.com/SHIVANINANDE)
-- Email: shivani.golu.nande.8@gmail.com
+- Email: shivaninandee@gmail.com
 
 **For Portfolio/Resume Reviews:**
 - 📋 [Complete Portfolio Document](PORTFOLIO.md) - All technical details, performance metrics, and architecture in one place
