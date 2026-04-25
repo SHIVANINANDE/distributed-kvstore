@@ -1,402 +1,334 @@
 # Distributed Key-Value Store
 
+A **high-performance, distributed key-value store** built with Go, featuring BadgerDB storage, Raft consensus, LRU caching, and a modern React dashboard. Designed for production workloads with comprehensive monitoring, structured logging, and cloud-native deployment support.
 
-A **production-ready, high-performance distributed key-value store** designed for modern cloud-native applications. Built with Go, featuring BadgerDB storage engine and Raft consensus for strong consistency and fault tolerance.
-
-## 🚀 Key Features
-
-### Performance & Scalability
-- **Verified high throughput** with 200K+ write ops/sec and 500K+ read ops/sec
-- **Microsecond-level latency** with P95 < 15μs for writes, P95 < 3μs for reads
-- **Horizontal scaling** with dynamic cluster membership
-- **LSM-tree storage** optimized for write-heavy workloads
-- **Intelligent load balancing** across cluster nodes
-
-### Reliability & Consistency  
-- **Strong consistency** via Raft consensus algorithm
-- **Automatic failover** with no data loss
-- **Fault tolerance** handles minority node failures
-- **ACID transactions** with optimistic concurrency control
-
-### Developer Experience
-- **Dual API support**: gRPC (high-performance) and REST (compatibility)
-- **Rich client libraries** for Go, Python, JavaScript
-- **Comprehensive monitoring** with Prometheus + Grafana
-- **Cloud-native deployment** optimized for Kubernetes
-
-### Enterprise Ready
-- **Multi-layered security**: TLS, RBAC, audit logging
-- **Backup & restore** with point-in-time recovery
-- **Chaos engineering** tested for fault tolerance
-- **Production observability** with detailed metrics and alerting
-
-## 📋 Table of Contents
-
-- [Quick Start](#-quick-start)
-- [Architecture](#-architecture)
-- [Performance](#-performance)
-- [API Documentation](#-api-documentation)
-- [Deployment](#-deployment)
-- [Monitoring](#-monitoring)
-- [Security](#-security)
-
-## 📋 **Portfolio & Technical Documentation**
-
-**Complete project overview for recruiters, hiring managers, and technical teams:**
-
-- 📋 **[Complete Portfolio](PORTFOLIO.md)** - Executive summary, verified performance metrics, and technical architecture in one comprehensive document
-
-*Perfect for resume discussions, technical interviews, and architectural reviews*
+[![Go Version](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go)](https://go.dev)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ---
 
-## 🎯 Quick Start
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    React Dashboard (Vite)                     │
+│              Dashboard · Key Explorer · Health                │
+└────────────────────────┬─────────────────────────────────────┘
+                         │  REST API
+┌────────────────────────▼─────────────────────────────────────┐
+│                   Nginx Load Balancer                         │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+┌────────────────────────▼─────────────────────────────────────┐
+│                   KVStore Server Node                         │
+│  ┌──────────┐  ┌──────────┐  ┌────────────┐  ┌───────────┐  │
+│  │ REST API │  │ gRPC API │  │ Monitoring │  │ Structured│  │
+│  │ (Mux)    │  │          │  │ Prometheus │  │  Logging  │  │
+│  └────┬─────┘  └────┬─────┘  └────────────┘  └───────────┘  │
+│       └──────┬───────┘                                       │
+│        ┌─────▼──────┐                                        │
+│        │ LRU Cache  │  ← In-memory, TTL, 10K entries         │
+│        └─────┬──────┘                                        │
+│        ┌─────▼──────┐                                        │
+│        │ BadgerDB   │  ← LSM-tree, WAL, Value-log GC        │
+│        └────────────┘                                        │
+│  ┌──────────────────┐                                        │
+│  │ Raft Consensus   │  ← Leader election, log replication    │
+│  └──────────────────┘                                        │
+└──────────────────────────────────────────────────────────────┘
+         │
+┌────────▼─────────────────────────────────────────────────────┐
+│  Observability: Prometheus · Grafana · Jaeger                 │
+└──────────────────────────────────────────────────────────────┘
+```
+
+## Tech Stack
+
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| **Storage** | BadgerDB v4 | LSM-tree based embedded KV store |
+| **Caching** | Custom LRU | In-memory cache with TTL and eviction |
+| **Consensus** | Raft (custom) | Leader election, log replication |
+| **API** | gorilla/mux + gRPC | Dual protocol support |
+| **Frontend** | React + Vite | Dashboard with real-time monitoring |
+| **Monitoring** | Prometheus + Grafana | Metrics collection and visualization |
+| **Tracing** | OpenTelemetry + Jaeger | Distributed tracing |
+| **Logging** | Go slog (structured) | JSON-formatted structured logging |
+| **Infra** | Docker, K8s, Terraform | Cloud-native deployment |
+
+## Quick Start
 
 ### Prerequisites
 
-- **Go 1.21+** for building from source
-- **Docker** for containerized deployment
-- **Kubernetes** for production deployment (optional)
+- **Go 1.25+** — [install](https://go.dev/dl/)
+- **Node.js 18+** — [install](https://nodejs.org/) (for frontend)
+- **Docker** (optional) — for containerized deployment
+- **protoc** (optional) — for regenerating protobuf code
 
-### Option 1: Binary Installation
-
-```bash
-# Download latest release
-curl -L https://github.com/your-org/distributed-kvstore/releases/latest/download/kvstore-linux-amd64.tar.gz | tar -xz
-
-# Run single node for development
-./kvstore server --config dev-config.yaml
-```
-
-### Option 2: Docker
+### 1. Clone & Build
 
 ```bash
-# Run single node
-docker run -p 8080:8080 -p 9090:9090 kvstore/kvstore:latest
-
-# Run 3-node cluster with docker-compose
-docker-compose up -f docker-compose.yml
-```
-
-### Option 3: Build from Source
-
-```bash
-# Clone and build
-git clone https://github.com/your-org/distributed-kvstore.git
-cd distributed-kvstore
-make build
-
-# Start server
-./bin/kvstore server
-```
-
-### Basic Operations
-
-```bash
-# Using REST API
-curl -X PUT "http://localhost:8080/v1/keys/hello" \
-  -H "Content-Type: application/json" \
-  -d '{"value": "world", "ttl_seconds": 3600}'
-
-curl -X GET "http://localhost:8080/v1/keys/hello"
-
-# Using CLI client
-./bin/kvstore-cli put hello world --ttl 1h
-./bin/kvstore-cli get hello
-./bin/kvstore-cli delete hello
-```
-
-### 🔬 Verify Performance Claims
-
-```bash
-# Clone and run benchmarks to verify performance metrics
 git clone https://github.com/SHIVANINANDE/distributed-kvstore.git
 cd distributed-kvstore
-
-# Run comprehensive performance tests
-./scripts/run-benchmarks.sh
-
-# Expected results on modern hardware:
-# PUT: ~200K ops/sec, ~5μs latency
-# GET: ~500K ops/sec, ~2μs latency
+make deps
+make build
 ```
 
-## 🏗️ Architecture
-
-### System Overview
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Client Applications                       │
-└─────────────────────┬───────────────────┬───────────────────────┘
-                      │                   │
-┌─────────────────────▼───────────────────▼───────────────────────┐
-│                    Load Balancer                                │
-│              (gRPC/HTTP Multiplexing)                           │
-└─────────────────────┬───────────────────┬───────────────────────┘
-                      │                   │
-┌─────────────────────▼───────────────────▼───────────────────────┐
-│                  KVStore Cluster                                │
-│  ┌─────────────┐   ┌─────────────┐   ┌─────────────┐           │
-│  │   Node 1    │   │   Node 2    │   │   Node 3    │           │
-│  │   (Leader)  │◄──┤  (Follower) │◄──┤  (Follower) │           │
-│  │             │   │             │   │             │           │
-│  │ ┌─────────┐ │   │ ┌─────────┐ │   │ ┌─────────┐ │           │
-│  │ │ gRPC/   │ │   │ │ gRPC/   │ │   │ │ gRPC/   │ │           │
-│  │ │ REST    │ │   │ │ REST    │ │   │ │ REST    │ │           │
-│  │ └─────────┘ │   │ └─────────┘ │   │ └─────────┘ │           │
-│  │ ┌─────────┐ │   │ ┌─────────┐ │   │ ┌─────────┐ │           │
-│  │ │  Raft   │ │   │ │  Raft   │ │   │ │  Raft   │ │           │
-│  │ │ Engine  │ │   │ │ Engine  │ │   │ │ Engine  │ │           │
-│  │ └─────────┘ │   │ └─────────┘ │   │ └─────────┘ │           │
-│  │ ┌─────────┐ │   │ ┌─────────┐ │   │ ┌─────────┐ │           │
-│  │ │BadgerDB │ │   │ │BadgerDB │ │   │ │BadgerDB │ │           │
-│  │ │ Storage │ │   │ │ Storage │ │   │ │ Storage │ │           │
-│  │ └─────────┘ │   │ └─────────┘ │   │ └─────────┘ │           │
-│  └─────────────┘   └─────────────┘   └─────────────┘           │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Key Components
-
-- **API Layer**: Dual gRPC/REST protocols for different client needs
-- **Consensus Engine**: Raft algorithm ensuring strong consistency
-- **Storage Engine**: BadgerDB with LSM-tree for high-performance persistence
-- **Cluster Management**: Dynamic membership with automatic leader election
-
-📖 **[Read Full System Design →](docs/SYSTEM_DESIGN.md)**
-
-## ⚡ Performance
-
-### 🎯 Verified Benchmark Results
-*Measured on Apple M1, macOS - August 2025*
-
-#### **Single-Threaded Performance**
-| Operation | **Actual Throughput** | **Measured Latency** | Test Configuration |
-|-----------|----------------------|---------------------|-------------------|
-| **PUT (1KB)** | **~200K ops/sec** | **~5 μs avg** | Sequential writes, BadgerDB |
-| **GET (1KB)** | **~500K ops/sec** | **~2 μs avg** | Sequential reads, memory cache |
-
-#### **Detailed Latency Analysis** 
-*Sample: 10,000 operations each*
-
-**PUT Operations:**
-- **P50 (median): 5.3 μs**
-- **P95: 15.2 μs**  
-- **P99: 23.4 μs**
-- Verified throughput: 144K ops/sec
-
-**GET Operations:**
-- **P50 (median): 1.1 μs**
-- **P95: 3.0 μs**
-- **P99: 5.5 μs**
-- Verified throughput: 643K ops/sec
-
-#### **Benchmark Verification**
-```bash
-# Run benchmarks yourself to verify results
-./scripts/run-benchmarks.sh
-
-# Or run specific tests
-go test -bench=BenchmarkRealPerformance -benchmem ./benchmarks/
-go test -v -run="TestRealLatencyMeasurement" ./benchmarks/
-```
-
-📊 **[View Complete Performance Analysis →](PERFORMANCE_RESULTS.md)**
-
-### System Specifications
-- **Platform**: Apple M1 (ARM64), 8-core CPU
-- **Storage**: BadgerDB LSM-tree engine
-- **Memory**: In-memory caching layer
-- **Consensus**: Raft algorithm for consistency
-
-## 📚 API Documentation
-
-### Quick API Reference
+### 2. Run the Server
 
 ```bash
-# REST API Examples
-PUT    /v1/keys/{key}           # Create/update key
-GET    /v1/keys/{key}           # Retrieve key  
-DELETE /v1/keys/{key}           # Delete key
-GET    /v1/keys?prefix=user:    # List keys
-POST   /v1/batch/put           # Batch operations
-POST   /v1/transaction         # ACID transactions
-GET    /v1/watch/{prefix}       # Real-time streams
+# Start with default config
+./bin/kvstore-server -config config.yaml
+
+# Or with environment overrides
+KV_SERVER_HOST=0.0.0.0 KV_LOG_LEVEL=debug ./bin/kvstore-server
 ```
 
-### Client Libraries
+Server starts on:
+- **HTTP API**: `http://localhost:8080`
+- **gRPC API**: `localhost:9090`
+- **Metrics**: `http://localhost:2112/metrics`
 
-```go
-// Go Client
-import "github.com/your-org/kvstore/client"
-
-client := kvstore.NewClient([]string{"node1:9090", "node2:9090"})
-err := client.Put(ctx, "user:123", userData, kvstore.WithTTL(1*time.Hour))
-value, err := client.Get(ctx, "user:123")
-```
-
-```python
-# Python Client  
-from kvstore import KVStoreClient
-
-client = KVStoreClient(["node1:9090", "node2:9090"])
-client.put("user:123", user_data, ttl_seconds=3600)
-value = client.get("user:123")
-```
-
-```javascript
-// JavaScript Client
-const { KVStoreClient } = require('@kvstore/client');
-
-const client = new KVStoreClient(['node1:9090', 'node2:9090']);
-await client.put('user:123', userData, { ttlSeconds: 3600 });
-const value = await client.get('user:123');
-```
-
-📖 **[Complete API Documentation →](docs/api.md)** | **[OpenAPI Spec →](docs/openapi.yaml)**
-
-## 🚀 Deployment
-
-### Docker Compose (Development)
+### 3. Run the Frontend
 
 ```bash
-# Quick 3-node cluster
+cd frontend
+npm install
+npm run dev
+# Open http://localhost:3001
+```
+
+### 4. Docker (Full Stack)
+
+```bash
 docker-compose up -d
-
-# Scale to 5 nodes
-docker-compose up -d --scale kvstore=5
+# KV Store:   http://localhost:8080
+# Dashboard:  http://localhost:3001
+# Grafana:    http://localhost:3000  (admin/admin)
+# Prometheus: http://localhost:9091
+# Jaeger:     http://localhost:16686
 ```
 
-### Kubernetes (Production)
+## API Reference
+
+### Key-Value Operations
 
 ```bash
-# Deploy with Helm
-helm repo add kvstore https://charts.kvstore.io
-helm install my-kvstore kvstore/kvstore --values production-values.yaml
+# Create / Update
+curl -X PUT http://localhost:8080/api/v1/kv/mykey \
+  -H "Content-Type: application/json" \
+  -d '{"value": "hello world"}'
+# Response: {"success": true}
 
-# Deploy with kubectl
-kubectl apply -f k8s/manifests/
+# Read
+curl http://localhost:8080/api/v1/kv/mykey
+# Response: {"found": true, "value": "hello world"}
+
+# Delete
+curl -X DELETE http://localhost:8080/api/v1/kv/mykey
+# Response: {"success": true, "existed": true}
+
+# Check existence
+curl -I http://localhost:8080/api/v1/kv/mykey
+
+# List with prefix
+curl "http://localhost:8080/api/v1/kv?prefix=user:&limit=50"
 ```
 
-### Terraform (Infrastructure)
+### Batch Operations
 
 ```bash
-# AWS EKS deployment
+# Batch PUT
+curl -X POST http://localhost:8080/api/v1/kv/batch/put \
+  -H "Content-Type: application/json" \
+  -d '{"items": [{"key":"a","value":"1"}, {"key":"b","value":"2"}]}'
+
+# Batch GET
+curl -X POST http://localhost:8080/api/v1/kv/batch/get \
+  -H "Content-Type: application/json" \
+  -d '{"keys": ["a", "b", "c"]}'
+
+# Batch DELETE
+curl -X POST http://localhost:8080/api/v1/kv/batch/delete \
+  -H "Content-Type: application/json" \
+  -d '{"keys": ["a", "b"]}'
+```
+
+### Health & Stats
+
+```bash
+curl http://localhost:8080/api/v1/health
+curl http://localhost:8080/api/v1/stats?details=true
+```
+
+Full OpenAPI specification: [`docs/openapi.yaml`](docs/openapi.yaml)
+
+## Performance
+
+### Benchmark Results
+
+*Measured on Apple M1, macOS — Go benchmarks with BadgerDB*
+
+| Operation | Throughput | P50 Latency | P95 Latency | P99 Latency |
+|-----------|-----------|-------------|-------------|-------------|
+| **PUT (1KB)** | ~200K ops/sec | 5.3 μs | 15.2 μs | 23.4 μs |
+| **GET (cache hit)** | ~500K+ ops/sec | 0.5 μs | 1.5 μs | 3.0 μs |
+| **GET (cache miss)** | ~500K ops/sec | 1.1 μs | 3.0 μs | 5.5 μs |
+| **Batch PUT (100)** | ~2M items/sec | 50 μs/batch | — | — |
+
+**HTTP API Latency** (includes serialization + network):
+
+| Operation | P50 | P95 | P99 |
+|-----------|-----|-----|-----|
+| PUT | ~0.5 ms | ~2 ms | ~5 ms |
+| GET | ~0.3 ms | ~1 ms | ~3 ms |
+| Batch (100 items) | ~5 ms | ~15 ms | ~30 ms |
+
+### Run Benchmarks
+
+```bash
+# Go benchmarks (storage layer)
+make benchmark
+
+# Performance tests
+make benchmark-performance
+
+# k6 load test (requires k6: brew install k6)
+# Start the server first, then:
+k6 run tests/k6_load_test.js
+
+# k6 with custom VUs and duration
+k6 run --vus 50 --duration 60s tests/k6_load_test.js
+```
+
+## Testing
+
+```bash
+# Unit tests
+make test
+
+# All tests with coverage
+make test-coverage
+
+# HTML coverage report
+make test-coverage-html
+# Open coverage.html in browser
+
+# Property-based tests (gopter)
+make test-property
+
+# Coverage threshold check (75% minimum)
+make test-coverage-threshold
+```
+
+### Test Types
+
+| Type | Command | Description |
+|------|---------|-------------|
+| Unit | `make test` | Storage, config, API handler tests |
+| Integration | `go test ./tests/...` | End-to-end API testing |
+| Property | `make test-property` | Randomized property-based tests |
+| Benchmark | `make benchmark` | Performance measurement |
+| Load | `k6 run tests/k6_load_test.js` | Concurrent load testing |
+
+## Configuration
+
+Configuration is loaded from YAML and can be overridden with environment variables:
+
+| Environment Variable | Config Key | Default |
+|---------------------|-----------|---------|
+| `KV_SERVER_HOST` | `server.host` | `localhost` |
+| `KV_SERVER_PORT` | `server.port` | `8080` |
+| `KV_SERVER_GRPC_PORT` | `server.grpc_port` | `9090` |
+| `KV_STORAGE_DATA_PATH` | `storage.data_path` | `./data/badger` |
+| `KV_STORAGE_IN_MEMORY` | `storage.in_memory` | `false` |
+| `KV_LOG_LEVEL` | `logging.level` | `info` |
+| `KV_LOG_FORMAT` | `logging.format` | `json` |
+| `KV_METRICS_ENABLED` | `metrics.enabled` | `true` |
+
+See [`docs/configuration.md`](docs/configuration.md) for full reference.
+
+## Deployment
+
+### Kubernetes
+
+```bash
+kubectl apply -f k8s/deploy.yaml
+```
+
+Helm chart and operator available in [`k8s/`](k8s/).
+
+### Terraform (AWS)
+
+```bash
 cd terraform/environments/production
-terraform init
-terraform apply
+terraform init && terraform apply
 ```
 
-📖 **[Deployment Guide →](docs/deployment.md)** | **[Kubernetes Operator →](k8s/operator/)**
+## Monitoring
 
-## 📊 Monitoring
+The system includes pre-configured monitoring:
 
-### Grafana Dashboards
+- **Prometheus** — Metrics collection at `/metrics`
+- **Grafana** — Pre-built dashboards for cluster health, performance, and capacity
+- **Jaeger** — Distributed tracing with OpenTelemetry
+- **Health checks** — Storage, memory, goroutine monitoring
 
-- **Cluster Overview**: Health, performance, and capacity metrics
-- **Performance Analysis**: Latency breakdowns and bottleneck identification  
-- **Cluster Visualization**: Real-time topology and consensus state
-- **Capacity Planning**: Growth trends and scaling recommendations
-
-### Key Metrics
-
-```prometheus
-# Request performance
-kvstore_request_duration_seconds{quantile="0.95"}
-rate(kvstore_requests_total[5m])
-
-# Consensus health  
-kvstore_raft_leader_elections_total
-kvstore_raft_commit_latency_seconds
-
-# Storage efficiency
-kvstore_storage_compaction_duration_seconds
-rate(kvstore_storage_operations_total[5m])
+Key metrics exposed:
+```
+kvstore_requests_total
+kvstore_request_duration_seconds
+kvstore_storage_size_bytes
+kvstore_storage_operations_total
+kvstore_memory_usage_bytes
+kvstore_goroutines
 ```
 
-### Alerting
+## Project Structure
 
-- **High Latency**: P95 > 100ms for 5 minutes
-- **Error Rate**: >1% errors for 2 minutes  
-- **Leader Elections**: Any leadership change
-- **Storage Full**: >80% disk usage
-- **Node Down**: Node unreachable for 1 minute
+```
+├── cmd/
+│   ├── server/          # Server entry point
+│   ├── client/          # CLI client
+│   └── kvtool/          # Admin tool
+├── internal/
+│   ├── api/             # REST handlers, routing
+│   ├── cache/           # LRU cache with TTL
+│   ├── cluster/         # Cluster management
+│   ├── config/          # Configuration loading & validation
+│   ├── consensus/       # Raft consensus implementation
+│   ├── logging/         # Structured logging (slog)
+│   ├── monitoring/      # Metrics, health checks, dashboard
+│   ├── security/        # TLS, RBAC, rate limiting
+│   ├── server/          # HTTP + gRPC server wiring
+│   └── storage/         # BadgerDB engine, cached storage
+├── frontend/            # React dashboard (Vite)
+├── proto/               # Protocol Buffer definitions
+├── tests/               # Integration & load tests
+├── benchmarks/          # Go benchmarks
+├── deployments/         # Prometheus, Grafana, Nginx configs
+├── k8s/                 # Kubernetes manifests
+├── terraform/           # Infrastructure as Code
+├── monitoring/          # Alertmanager, Grafana dashboards
+├── docs/                # API docs, system design, ADRs
+└── .github/workflows/   # CI/CD pipelines
+```
 
-📖 **[Monitoring Guide →](docs/monitoring.md)** | **[Grafana Dashboards →](monitoring/grafana/dashboards/)**
+## Future Roadmap
 
-## 🔒 Security
+- [ ] **TTL support at API level** — Per-key expiration via PUT request
+- [ ] **Watch/Subscribe API** — Server-Sent Events for key change notifications
+- [ ] **Multi-region replication** — Cross-datacenter data sync
+- [ ] **Admin UI improvements** — Config editor, cluster topology visualization
+- [ ] **Rate limiting middleware** — Token bucket with configurable limits
+- [ ] **Client SDK** — Published Go, Python, and JavaScript client libraries
 
-### Authentication & Authorization
-
-- **mTLS**: Client certificate authentication
-- **API Keys**: Simple token-based auth
-- **JWT**: JSON Web Token support
-- **RBAC**: Role-based access control
-
-### Encryption
-
-- **At Rest**: AES-256 encryption with external key management
-- **In Transit**: TLS 1.3 for all communications
-- **Backup**: Encrypted backups with key rotation
-
-### Compliance
-
-- **Audit Logging**: Comprehensive access logs
-- **SOC 2**: Type II compliance ready
-- **GDPR**: Data protection and right to erasure
-- **FIPS 140-2**: Cryptographic module validation
-
-📖 **[Security Documentation →](docs/SECURITY_COMPLIANCE.md)**
-
-## 🏢 Production Deployments
-
-### Case Studies
-
-- **E-commerce Platform**: 99.99% uptime, 500K QPS peak load
-- **Gaming Backend**: Sub-5ms global latency, 10M concurrent users  
-- **IoT Data Platform**: 1M devices, 100TB daily ingestion
-- **Financial Services**: ACID compliance, regulatory requirements
-
-
-## 🧪 Testing & Quality
-
-### Test Coverage
-
-- **Unit Tests**: 95% code coverage
-- **Integration Tests**: End-to-end API testing
-- **Chaos Engineering**: Jepsen-verified linearizability
-- **Performance Tests**: Continuous benchmarking
-- **Security Tests**: OWASP compliance scanning
-
-### Quality Assurance
-
-- **Continuous Integration**: GitHub Actions + comprehensive test suite
-- **Static Analysis**: golangci-lint + security scanning
-- **Dependency Management**: Automated vulnerability scanning
-- **Code Review**: Required for all changes
-
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## � Author
+## Author
 
 **Shivani Nande**
 - GitHub: [@SHIVANINANDE](https://github.com/SHIVANINANDE)
 - Email: shivaninandee@gmail.com
 
-**For Portfolio/Resume Reviews:**
-- 📋 [Complete Portfolio Document](PORTFOLIO.md) - All technical details, performance metrics, and architecture in one place
+## License
 
-## �🙏 Acknowledgments
-
-- **BadgerDB**: High-performance storage engine
-- **etcd/raft**: Raft consensus implementation reference
-- **Prometheus**: Metrics and monitoring ecosystem
-- **CNCF**: Cloud native computing patterns
-
----
-
-**[⬆ Back to Top](#distributed-key-value-store)** | **[📖 Documentation](docs/)**
+MIT License — see [LICENSE](LICENSE) for details.

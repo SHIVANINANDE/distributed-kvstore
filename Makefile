@@ -216,6 +216,20 @@ release: clean deps proto test build ## Build release binaries
 	@cp bin/* release/
 	@echo "Release built in release/ directory"
 
+# Frontend targets
+frontend-install: ## Install frontend dependencies
+	@echo "Installing frontend dependencies..."
+	@cd frontend && npm install
+
+frontend-dev: ## Run frontend dev server
+	@echo "Starting frontend dev server..."
+	@cd frontend && npm run dev
+
+frontend-build: ## Build frontend for production
+	@echo "Building frontend..."
+	@cd frontend && npm run build
+	@echo "Frontend built in frontend/dist/"
+
 # Check targets
 check: fmt vet lint test ## Run all checks (format, vet, lint, test)
 	@echo "All checks passed!"

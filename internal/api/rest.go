@@ -19,6 +19,7 @@ type RESTHandler struct {
 	storage    storage.StorageEngine
 	logger     *logging.Logger
 	monitoring *monitoring.MonitoringService
+	startTime  time.Time
 }
 
 // NewRESTHandler creates a new REST API handler
@@ -27,6 +28,7 @@ func NewRESTHandler(storageEngine storage.StorageEngine, logger *logging.Logger,
 		storage:    storageEngine,
 		logger:     logger,
 		monitoring: monitoringService,
+		startTime:  time.Now(),
 	}
 }
 
@@ -178,10 +180,19 @@ func (h *RESTHandler) PutKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Enforce max key length
+	if len(key) > 1024 {
+		h.writeErrorResponse(w, http.StatusBadRequest, "Key exceeds maximum length of 1024 bytes")
+		return
+	}
+
+	// Limit request body size to 16MB
+	r.Body = http.MaxBytesReader(w, r.Body, 16*1024*1024)
+
 	var req PutRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.logger.WarnContext(ctx, "PUT request with invalid JSON", "error", err.Error())
-		h.writeErrorResponse(w, http.StatusBadRequest, "Invalid JSON request")
+		h.writeErrorResponse(w, http.StatusBadRequest, "Invalid JSON request body")
 		return
 	}
 
@@ -193,7 +204,7 @@ func (h *RESTHandler) PutKey(w http.ResponseWriter, r *http.Request) {
 
 	err := h.storage.Put([]byte(key), []byte(req.Value))
 	duration := time.Since(start)
-	
+
 	if err != nil {
 		h.logger.DatabaseOperation(ctx, "put", key, duration, err)
 		h.writeJSONResponse(w, http.StatusInternalServerError, PutResponse{
@@ -204,7 +215,7 @@ func (h *RESTHandler) PutKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.logger.DatabaseOperation(ctx, "put", key, duration, nil)
-	h.writeJSONResponse(w, http.StatusOK, PutResponse{
+	h.writeJSONResponse(w, http.StatusCreated, PutResponse{
 		Success: true,
 	})
 }
@@ -242,9 +253,8 @@ func (h *RESTHandler) GetKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSONResponse(w, http.StatusOK, GetResponse{
-		Found:     true,
-		Value:     string(value),
-		CreatedAt: time.Now().Unix(),
+		Found: true,
+		Value: string(value),
 	})
 }
 
@@ -373,9 +383,22 @@ func (h *RESTHandler) ListKeys(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/v1/kv/batch/put
 func (h *RESTHandler) BatchPut(w http.ResponseWriter, r *http.Request) {
+	// Limit batch request body to 64MB
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024*1024)
+
 	var req BatchPutRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeErrorResponse(w, http.StatusBadRequest, "Invalid JSON request")
+		return
+	}
+
+	if len(req.Items) == 0 {
+		h.writeErrorResponse(w, http.StatusBadRequest, "Items list cannot be empty")
+		return
+	}
+
+	if len(req.Items) > 10000 {
+		h.writeErrorResponse(w, http.StatusBadRequest, "Batch size exceeds maximum of 10000 items")
 		return
 	}
 
@@ -384,33 +407,52 @@ func (h *RESTHandler) BatchPut(w http.ResponseWriter, r *http.Request) {
 		"count", len(req.Items),
 	)
 
-	successCount := 0
-	errorCount := 0
+	// Validate all items first, then use batch storage operation
+	var validItems []storage.KeyValue
 	var errors []BatchItemError
 
 	for _, item := range req.Items {
 		if item.Key == "" {
-			errorCount++
 			errors = append(errors, BatchItemError{
 				Key:   item.Key,
 				Error: "key cannot be empty",
 			})
 			continue
 		}
-
-		err := h.storage.Put([]byte(item.Key), []byte(item.Value))
-		if err != nil {
-			errorCount++
+		if len(item.Key) > 1024 {
 			errors = append(errors, BatchItemError{
 				Key:   item.Key,
-				Error: err.Error(),
+				Error: "key exceeds maximum length of 1024 bytes",
 			})
-			h.logger.WithError(err).WithField("key", item.Key).Error("Failed to put key in batch")
+			continue
+		}
+		validItems = append(validItems, storage.KeyValue{
+			Key:   []byte(item.Key),
+			Value: []byte(item.Value),
+		})
+	}
+
+	// Use batch storage operation for valid items
+	successCount := 0
+	if len(validItems) > 0 {
+		if err := h.storage.BatchPut(validItems); err != nil {
+			// If batch fails, fall back to individual puts
+			for _, item := range validItems {
+				if putErr := h.storage.Put(item.Key, item.Value); putErr != nil {
+					errors = append(errors, BatchItemError{
+						Key:   string(item.Key),
+						Error: putErr.Error(),
+					})
+				} else {
+					successCount++
+				}
+			}
 		} else {
-			successCount++
+			successCount = len(validItems)
 		}
 	}
 
+	errorCount := len(errors)
 	totalCount := successCount + errorCount
 	successRate := 0.0
 	if totalCount > 0 {
@@ -443,51 +485,59 @@ func (h *RESTHandler) BatchGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(req.Keys) == 0 {
+		h.writeErrorResponse(w, http.StatusBadRequest, "Keys list cannot be empty")
+		return
+	}
+
+	if len(req.Keys) > 10000 {
+		h.writeErrorResponse(w, http.StatusBadRequest, "Batch size exceeds maximum of 10000 keys")
+		return
+	}
+
 	h.logger.DebugContext(r.Context(), "Processing batch GET request",
 		"method", "BATCH_GET",
 		"count", len(req.Keys),
 	)
 
-	var results []BatchItemResult
-
+	// Use batch storage operation
+	var batchKeys [][]byte
 	for _, key := range req.Keys {
-		if key == "" {
+		batchKeys = append(batchKeys, []byte(key))
+	}
+
+	storageResults, err := h.storage.BatchGet(batchKeys)
+	if err != nil {
+		h.logger.WithError(err).Error("Batch GET storage operation failed")
+		h.writeErrorResponse(w, http.StatusInternalServerError, "Batch GET failed")
+		return
+	}
+
+	var results []BatchItemResult
+	foundCount := 0
+
+	for i, sr := range storageResults {
+		key := req.Keys[i]
+		if sr.Found {
+			foundCount++
+			results = append(results, BatchItemResult{
+				Key:   key,
+				Found: true,
+				Value: string(sr.Value),
+			})
+		} else {
 			results = append(results, BatchItemResult{
 				Key:   key,
 				Found: false,
-			})
-			continue
-		}
-
-		value, err := h.storage.Get([]byte(key))
-		if err != nil {
-			if err == storage.ErrKeyNotFound {
-				results = append(results, BatchItemResult{
-					Key:   key,
-					Found: false,
-				})
-			} else {
-				h.logger.WithError(err).WithField("key", key).Error("Failed to get key in batch")
-				h.writeJSONResponse(w, http.StatusInternalServerError, BatchResponse{
-					Errors: []BatchItemError{{Key: key, Error: err.Error()}},
-				})
-				return
-			}
-		} else {
-			results = append(results, BatchItemResult{
-				Key:       key,
-				Found:     true,
-				Value:     string(value),
-				CreatedAt: time.Now().Unix(),
 			})
 		}
 	}
 
 	h.writeJSONResponse(w, http.StatusOK, BatchResponse{
-		SuccessCount: len(req.Keys),
-		ErrorCount:   0,
+		SuccessCount: foundCount,
+		ErrorCount:   len(req.Keys) - foundCount,
 		TotalCount:   len(req.Keys),
-		SuccessRate:  100.0,
+		SuccessRate:  float64(foundCount) / float64(len(req.Keys)) * 100,
 		Results:      results,
 	})
 }
@@ -563,7 +613,7 @@ func (h *RESTHandler) Health(w http.ResponseWriter, r *http.Request) {
 	h.writeJSONResponse(w, http.StatusOK, HealthResponse{
 		Healthy:       true,
 		Status:        "healthy",
-		UptimeSeconds: int64(time.Since(time.Now()).Seconds()),
+		UptimeSeconds: int64(time.Since(h.startTime).Seconds()),
 		Version:       "1.0.0",
 		Timestamp:     time.Now().Unix(),
 	})
@@ -659,15 +709,23 @@ func (h *RESTHandler) writeErrorResponse(w http.ResponseWriter, statusCode int, 
 
 // Note: Logging middleware is now handled by the logging package
 
-// CORS middleware
+// CORS middleware with configurable origins
 func (h *RESTHandler) CORSMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			origin = "*"
+		}
+		// In production, this should be configured via allowlist.
+		// For development, allow the requesting origin.
+		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, HEAD, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID")
+		w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, X-Correlation-ID")
+		w.Header().Set("Access-Control-Max-Age", "86400")
 
 		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusOK)
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 

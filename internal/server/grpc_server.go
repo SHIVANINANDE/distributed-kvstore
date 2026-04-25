@@ -19,20 +19,22 @@ import (
 // GRPCServer implements the KVStore gRPC service
 type GRPCServer struct {
 	kvstore.UnimplementedKVStoreServer
-	
-	config   *config.Config
-	storage  storage.StorageEngine
-	logger   *logging.Logger
-	server   *grpc.Server
-	listener net.Listener
+
+	config    *config.Config
+	storage   storage.StorageEngine
+	logger    *logging.Logger
+	server    *grpc.Server
+	listener  net.Listener
+	startTime time.Time
 }
 
 // NewGRPCServer creates a new gRPC server
 func NewGRPCServer(cfg *config.Config, storageEngine storage.StorageEngine, logger *logging.Logger) *GRPCServer {
 	return &GRPCServer{
-		config:  cfg,
-		storage: storageEngine,
-		logger:  logger,
+		config:    cfg,
+		storage:   storageEngine,
+		logger:    logger,
+		startTime: time.Now(),
 	}
 }
 
@@ -113,24 +115,22 @@ func (s *GRPCServer) Get(ctx context.Context, req *kvstore.GetRequest) (*kvstore
 	
 	value, err := s.storage.Get([]byte(req.Key))
 	if err != nil {
-		// Check if it's a "key not found" error
-		if err.Error() == "Key not found" { // This should match your storage engine's error
+		if err == storage.ErrKeyNotFound {
 			return &kvstore.GetResponse{
 				Found: false,
 			}, nil
 		}
-		
+
 		s.logger.ErrorContext(ctx, "Get failed", "key", req.Key, "error", err)
 		return &kvstore.GetResponse{
 			Found: false,
 			Error: err.Error(),
 		}, nil
 	}
-	
+
 	return &kvstore.GetResponse{
-		Found:     true,
-		Value:     value,
-		CreatedAt: time.Now().Unix(), // In a real implementation, this would come from storage
+		Found: true,
+		Value: value,
 	}, nil
 }
 
@@ -365,7 +365,7 @@ func (s *GRPCServer) Health(ctx context.Context, req *kvstore.HealthRequest) (*k
 	return &kvstore.HealthResponse{
 		Healthy:       true,
 		Status:        "healthy",
-		UptimeSeconds: int64(time.Since(time.Now()).Seconds()), // This should track actual uptime
+		UptimeSeconds: int64(time.Since(s.startTime).Seconds()),
 		Version:       "1.0.0",
 	}, nil
 }
@@ -373,7 +373,25 @@ func (s *GRPCServer) Health(ctx context.Context, req *kvstore.HealthRequest) (*k
 // Stats implements the Stats RPC
 func (s *GRPCServer) Stats(ctx context.Context, req *kvstore.StatsRequest) (*kvstore.StatsResponse, error) {
 	stats := s.storage.Stats()
-	
+
+	// Extract real values from storage stats
+	var totalSize, lsmSize, vlogSize int64
+	if v, ok := stats["total_size"]; ok {
+		if val, ok := v.(int64); ok {
+			totalSize = val
+		}
+	}
+	if v, ok := stats["lsm_size"]; ok {
+		if val, ok := v.(int64); ok {
+			lsmSize = val
+		}
+	}
+	if v, ok := stats["vlog_size"]; ok {
+		if val, ok := v.(int64); ok {
+			vlogSize = val
+		}
+	}
+
 	// Convert storage stats to protobuf format
 	details := make(map[string]string)
 	if req.IncludeDetails {
@@ -381,12 +399,11 @@ func (s *GRPCServer) Stats(ctx context.Context, req *kvstore.StatsRequest) (*kvs
 			details[key] = fmt.Sprintf("%v", value)
 		}
 	}
-	
+
 	return &kvstore.StatsResponse{
-		TotalKeys: 0,    // This should be extracted from stats
-		TotalSize: 0,    // This should be extracted from stats  
-		LsmSize:   0,    // This should be extracted from stats
-		VlogSize:  0,    // This should be extracted from stats
+		TotalSize: totalSize,
+		LsmSize:   lsmSize,
+		VlogSize:  vlogSize,
 		Details:   details,
 	}, nil
 }

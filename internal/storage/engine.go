@@ -11,10 +11,6 @@ import (
 
 type Engine struct {
 	db *badger.DB
-	// Performance optimization pools
-	readTxnPool   chan *badger.Txn
-	writeTxnPool  chan *badger.Txn
-	maxPoolSize   int
 }
 
 var _ StorageEngine = (*Engine)(nil)
@@ -61,11 +57,11 @@ func (c *Config) GetGCInterval() time.Duration {
 
 func NewEngine(config Config) (*Engine, error) {
 	opts := badger.DefaultOptions(config.DataPath)
-	
+
 	if config.InMemory {
 		opts = opts.WithInMemory(true)
 	}
-	
+
 	// WAL and durability settings
 	opts = opts.WithSyncWrites(config.SyncWrites)
 	if config.WALEnabled {
@@ -80,30 +76,24 @@ func NewEngine(config Config) (*Engine, error) {
 		if config.FSyncThreshold > 0 {
 			// Use periodic syncing for better performance with manual sync control
 			opts = opts.WithSyncWrites(false)
-			// Note: Manual fsync will be handled in batch operations
 		}
 	}
-	
+
 	opts = opts.WithLogger(nil) // Disable badger's default logger
-	
+
 	db, err := badger.Open(opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open badger database: %w", err)
 	}
 
 	engine := &Engine{
-		db:          db,
-		maxPoolSize: 50, // Configurable pool size for concurrent operations
+		db: db,
 	}
-	
-	// Initialize transaction pools for better concurrency
-	engine.readTxnPool = make(chan *badger.Txn, engine.maxPoolSize)
-	engine.writeTxnPool = make(chan *badger.Txn, engine.maxPoolSize)
-	
+
 	if config.ValueLogGC && !config.InMemory {
 		go engine.runGC(config.GCInterval)
 	}
-	
+
 	return engine, nil
 }
 

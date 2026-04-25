@@ -1,5 +1,5 @@
 # Multi-stage build for optimized production image
-FROM golang:1.21-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 # Install git and other build dependencies
 RUN apk add --no-cache git protobuf-dev protoc
@@ -41,7 +41,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     ./cmd/kvtool
 
 # Production stage - minimal image
-FROM alpine:3.18
+FROM alpine:3.20
 
 # Install ca-certificates for HTTPS requests and create user
 RUN apk --no-cache add ca-certificates tzdata && \

@@ -1,7 +1,9 @@
-data/
-*.vlog
-*.mem
+# Build artifacts
+bin/
+release/
+*.exe
 
+# Data directories
 data/
 *.vlog
 *.mem
@@ -11,6 +13,36 @@ MANIFEST
 LOCK
 DISCARD
 
-# Claude AI assistant files
-.claude/
+# Coverage
+coverage.out
+coverage.html
+coverage-detailed.txt
+*.out
+test-results.json
+coverage-summary.txt
 
+# OS files
+.DS_Store
+*.swp
+*.swo
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Docker
+*.tar
+
+# AI assistant files
+.claude/
+.gemini/
+
+# Compiled binaries
+kvstore
+kvtool
+server
