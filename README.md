@@ -358,13 +358,6 @@ rate(kvstore_storage_operations_total[5m])
 - **IoT Data Platform**: 1M devices, 100TB daily ingestion
 - **Financial Services**: ACID compliance, regulatory requirements
 
-### Testimonials
-
-> "KVStore replaced our Redis cluster and eliminated our consistency issues while improving performance by 40%"  
-> — *Senior Engineer, Fortune 500 E-commerce*
-
-> "The operational simplicity and built-in monitoring saved our team months of development time"  
-> — *DevOps Lead, Gaming Startup*
 
 ## 🧪 Testing & Quality
 
